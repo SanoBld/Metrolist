@@ -90,6 +90,7 @@ import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
 import com.metrolist.music.constants.AlbumThumbnailSize
 import com.metrolist.music.constants.HideExplicitKey
+import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.ThumbnailCornerRadius
 import com.metrolist.music.db.entities.Album
 import com.metrolist.music.playback.ExoDownloadService
@@ -102,6 +103,7 @@ import com.metrolist.music.ui.component.NavigationTitle
 import com.metrolist.music.ui.component.SongListItem
 import com.metrolist.music.ui.component.YouTubeGridItem
 import androidx.compose.material3.Checkbox
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.util.fastForEachReversed
@@ -137,13 +139,17 @@ fun AlbumScreen(
     val albumWithSongs by viewModel.albumWithSongs.collectAsState()
     val otherVersions by viewModel.otherVersions.collectAsState()
     val hideExplicit by rememberPreference(key = HideExplicitKey, defaultValue = false)
+    val hideVideoSongs by rememberPreference(key = HideVideoSongsKey, defaultValue = false)
 
-    val filteredSongs = remember(albumWithSongs, hideExplicit) {
+    val filteredSongs = remember(albumWithSongs, hideExplicit, hideVideoSongs) {
+        var songs = albumWithSongs?.songs ?: emptyList()
         if (hideExplicit) {
-            albumWithSongs?.songs?.filter { !it.song.explicit } ?: emptyList()
-        } else {
-            albumWithSongs?.songs ?: emptyList()
+            songs = songs.filter { !it.song.explicit }
         }
+        if (hideVideoSongs) {
+            songs = songs.filter { !it.song.isVideo }
+        }
+        songs
     }
 
     var inSelectMode by rememberSaveable { mutableStateOf(false) }
@@ -171,7 +177,7 @@ fun AlbumScreen(
 
     val downloadUtil = LocalDownloadUtil.current
     var downloadState by remember {
-        mutableStateOf(Download.STATE_STOPPED)
+        mutableIntStateOf(Download.STATE_STOPPED)
     }
 
     LaunchedEffect(albumWithSongs) {
@@ -212,10 +218,10 @@ fun AlbumScreen(
                             .size(240.dp)
                             .shadow(
                                 elevation = 24.dp,
-                                shape = RoundedCornerShape(16.dp),
+                                shape = RoundedCornerShape(3.dp),
                                 spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
                             ),
-                        shape = RoundedCornerShape(16.dp)
+                        shape = RoundedCornerShape(3.dp)
                     ) {
                         AsyncImage(
                             model = albumWithSongs.album.thumbnailUrl,

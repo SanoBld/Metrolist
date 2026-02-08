@@ -193,7 +193,7 @@ fun AboutScreen(
 
             IconButton(
                 onClick = {
-                    uriHandler.openUri("https://mostafaalagamy.github.io")
+                    uriHandler.openUri("https://metrolist.meowery.eu")
                 }
             ) {
                 Icon(
@@ -240,6 +240,17 @@ fun AboutScreen(
             color = MaterialTheme.colorScheme.secondary,
             modifier = Modifier.clickable {
                 uriHandler.openUri("https://github.com/adrielGGmotion")
+            }
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Text(
+            text = "Nyx",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.clickable {
+                uriHandler.openUri("https://github.com/nyxiereal")
             }
         )
 

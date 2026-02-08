@@ -9,8 +9,10 @@ import android.annotation.SuppressLint
 import android.content.res.Configuration
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
@@ -81,6 +83,8 @@ fun SelectionSongMenu(
     val coroutineScope = rememberCoroutineScope()
     val playerConnection = LocalPlayerConnection.current ?: return
     val syncUtils = LocalSyncUtils.current
+    val listenTogetherManager = com.metrolist.music.LocalListenTogetherManager.current
+    val isGuest = listenTogetherManager?.isInRoom == true && listenTogetherManager.isHost == false
 
     val allInLibrary by remember {
         mutableStateOf(
@@ -201,8 +205,8 @@ fun SelectionSongMenu(
     ) {
         item {
             NewActionGrid(
-                actions = listOf(
-                    NewAction(
+                actions = listOfNotNull(
+                    if (!isGuest) NewAction(
                         icon = {
                             Icon(
                                 painter = painterResource(R.drawable.play),
@@ -222,8 +226,8 @@ fun SelectionSongMenu(
                             )
                             clearAction()
                         }
-                    ),
-                    NewAction(
+                    ) else null,
+                    if (!isGuest) NewAction(
                         icon = {
                             Icon(
                                 painter = painterResource(R.drawable.shuffle),
@@ -243,7 +247,7 @@ fun SelectionSongMenu(
                             )
                             clearAction()
                         }
-                    ),
+                    ) else null,
                     NewAction(
                         icon = {
                             Icon(
@@ -265,62 +269,64 @@ fun SelectionSongMenu(
         item {
             Material3MenuGroup(
                 items = buildList {
-                    add(
-                        Material3MenuItemData(
-                            title = { Text(text = stringResource(R.string.play_next)) },
-                            description = { Text(text = stringResource(R.string.play_next_desc)) },
-                            icon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.playlist_play),
-                                    contentDescription = null,
-                                )
-                            },
-                            onClick = {
-                                onDismiss()
-                                playerConnection.playNext(songSelection.map { it.toMediaItem() })
-                                clearAction()
-                            }
+                    if (!isGuest) {
+                        add(
+                            Material3MenuItemData(
+                                title = { Text(text = stringResource(R.string.play_next)) },
+                                description = { Text(text = stringResource(R.string.play_next_desc)) },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.playlist_play),
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    onDismiss()
+                                    playerConnection.playNext(songSelection.map { it.toMediaItem() })
+                                    clearAction()
+                                }
+                            )
                         )
-                    )
-                    add(
-                        Material3MenuItemData(
-                            title = { Text(text = stringResource(R.string.shuffle)) },
-                            description = { Text(text = stringResource(R.string.add_to_queue_desc)) },
-                            icon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.shuffle),
-                                    contentDescription = null,
-                                )
-                            },
-                            onClick = {
-                                onDismiss()
-                                playerConnection.playQueue(
-                                    ListQueue(
-                                        title = "Selection",
-                                        items = songSelection.shuffled().map { it.toMediaItem() },
-                                    ),
-                                )
-                                clearAction()
-                            }
+                        add(
+                            Material3MenuItemData(
+                                title = { Text(text = stringResource(R.string.shuffle)) },
+                                description = { Text(text = stringResource(R.string.add_to_queue_desc)) },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.shuffle),
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    onDismiss()
+                                    playerConnection.playQueue(
+                                        ListQueue(
+                                            title = "Selection",
+                                            items = songSelection.shuffled().map { it.toMediaItem() },
+                                        ),
+                                    )
+                                    clearAction()
+                                }
+                            )
                         )
-                    )
-                    add(
-                        Material3MenuItemData(
-                            title = { Text(text = stringResource(R.string.add_to_queue)) },
-                            description = { Text(text = stringResource(R.string.add_to_queue_desc)) },
-                            icon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.queue_music),
-                                    contentDescription = null,
-                                )
-                            },
-                            onClick = {
-                                onDismiss()
-                                playerConnection.addToQueue(songSelection.map { it.toMediaItem() })
-                                clearAction()
-                            }
+                        add(
+                            Material3MenuItemData(
+                                title = { Text(text = stringResource(R.string.add_to_queue)) },
+                                description = { Text(text = stringResource(R.string.add_to_queue_desc)) },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.queue_music),
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    onDismiss()
+                                    playerConnection.addToQueue(songSelection.map { it.toMediaItem() })
+                                    clearAction()
+                                }
+                            )
                         )
-                    )
+                    }
                     add(
                         Material3MenuItemData(
                             title = { Text(text = stringResource(R.string.add_to_playlist)) },
@@ -336,55 +342,63 @@ fun SelectionSongMenu(
                             }
                         )
                     )
-                    // COMMENTED OUT: Library add/remove option
-                    // Material3MenuItemData(
-                    //     title = {
-                    //         Text(
-                    //             text = stringResource(
-                    //                 if (allInLibrary) R.string.remove_from_library else R.string.add_to_library
-                    //             )
-                    //         )
-                    //     },
-                    //     icon = {
-                    //         Icon(
-                    //             painter = painterResource(
-                    //                 if (allInLibrary) R.drawable.library_add_check else R.drawable.library_add
-                    //             ),
-                    //             contentDescription = null,
-                    //         )
-                    //     },
-                    //     onClick = {
-                    //         if (allInLibrary) {
-                    //             database.query {
-                    //                 songSelection.forEach { song ->
-                    //                     inLibrary(song.id, null)
-                    //                 }
-                    //             }
-                    //             coroutineScope.launch {
-                    //                 val tokens =
-                    //                     songSelection.mapNotNull { it.song.libraryRemoveToken }
-                    //                 tokens.chunked(20).forEach {
-                    //                     YouTube.feedback(it)
-                    //                 }
-                    //             }
-                    //         } else {
-                    //             database.transaction {
-                    //                 songSelection.forEach { song ->
-                    //                     insert(song.toMediaMetadata())
-                    //                     inLibrary(song.id, LocalDateTime.now())
-                    //                 }
-                    //             }
-                    //             coroutineScope.launch {
-                    //                 val tokens =
-                    //                     songSelection.filter { it.song.inLibrary == null }
-                    //                         .mapNotNull { it.song.libraryAddToken }
-                    //                 tokens.chunked(20).forEach {
-                    //                     YouTube.feedback(it)
-                    //                 }
-                    //             }
-                    //         }
-                    //     }
-                    // ),
+                    add(
+                        Material3MenuItemData(
+                            title = {
+                                Text(
+                                    text = stringResource(
+                                        if (allInLibrary) R.string.remove_from_library else R.string.add_to_library
+                                    )
+                                )
+                            },
+                            icon = {
+                                Icon(
+                                    painter = painterResource(
+                                        if (allInLibrary) R.drawable.library_add_check else R.drawable.library_add
+                                    ),
+                                    contentDescription = null,
+                                )
+                            },
+                            onClick = {
+                                if (allInLibrary) {
+                                    database.query {
+                                        songSelection.forEach { song ->
+                                            inLibrary(song.id, null)
+                                        }
+                                    }
+                                    coroutineScope.launch {
+                                        // Use the new reliable method that fetches fresh tokens
+                                        songSelection.forEach { song ->
+                                            YouTube.toggleSongLibrary(song.id, false)
+                                        }
+                                    }
+                                } else {
+                                    database.transaction {
+                                        songSelection.forEach { song ->
+                                            insert(song.toMediaMetadata())
+                                            inLibrary(song.id, LocalDateTime.now())
+                                        }
+                                    }
+                                    coroutineScope.launch {
+                                        // Use the new reliable method that fetches fresh tokens
+                                        songSelection.filter { it.song.inLibrary == null }
+                                            .forEach { song ->
+                                                YouTube.toggleSongLibrary(song.id, true)
+                                            }
+                                    }
+                                }
+                            }
+                        )
+                    )
+                }
+            )
+        }
+
+        item { Spacer(modifier = Modifier.height(12.dp)) }
+
+        item {
+            Material3MenuGroup(
+                items = buildList {
                     add(
                         when (downloadState) {
                             Download.STATE_COMPLETED -> {
@@ -524,6 +538,8 @@ fun SelectionMediaMetadataMenu(
     val downloadUtil = LocalDownloadUtil.current
     val coroutineScope = rememberCoroutineScope()
     val playerConnection = LocalPlayerConnection.current ?: return
+    val listenTogetherManager = com.metrolist.music.LocalListenTogetherManager.current
+    val isGuest = listenTogetherManager?.isInRoom == true && listenTogetherManager.isHost == false
 
     val allLiked by remember(songSelection) {
         mutableStateOf(songSelection.isNotEmpty() && songSelection.all { it.liked })
@@ -628,7 +644,7 @@ fun SelectionMediaMetadataMenu(
         item {
             Material3MenuGroup(
                 items = buildList {
-                    if (currentItems.isNotEmpty()) {
+                    if (currentItems.isNotEmpty() && !isGuest) {
                         add(
                             Material3MenuItemData(
                                 title = { Text(text = stringResource(R.string.delete)) },
@@ -654,64 +670,68 @@ fun SelectionMediaMetadataMenu(
                             )
                         )
                     }
-                    add(
-                        Material3MenuItemData(
-                            title = { Text(text = stringResource(R.string.play)) },
-                            icon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.play),
-                                    contentDescription = null,
-                                )
-                            },
-                            onClick = {
-                                onDismiss()
-                                playerConnection.playQueue(
-                                    ListQueue(
-                                        title = "Selection",
-                                        items = songSelection.map { it.toMediaItem() },
-                                    ),
-                                )
-                                clearAction()
-                            }
+                    if (!isGuest) {
+                        add(
+                            Material3MenuItemData(
+                                title = { Text(text = stringResource(R.string.play)) },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.play),
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    onDismiss()
+                                    playerConnection.playQueue(
+                                        ListQueue(
+                                            title = "Selection",
+                                            items = songSelection.map { it.toMediaItem() },
+                                        ),
+                                    )
+                                    clearAction()
+                                }
+                            )
                         )
-                    )
-                    add(
-                        Material3MenuItemData(
-                            title = { Text(text = stringResource(R.string.shuffle)) },
-                            icon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.shuffle),
-                                    contentDescription = null,
-                                )
-                            },
-                            onClick = {
-                                onDismiss()
-                                playerConnection.playQueue(
-                                    ListQueue(
-                                        title = "Selection",
-                                        items = songSelection.shuffled().map { it.toMediaItem() },
-                                    ),
-                                )
-                                clearAction()
-                            }
+                        add(
+                            Material3MenuItemData(
+                                title = { Text(text = stringResource(R.string.shuffle)) },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.shuffle),
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    onDismiss()
+                                    playerConnection.playQueue(
+                                        ListQueue(
+                                            title = "Selection",
+                                            items = songSelection.shuffled().map { it.toMediaItem() },
+                                        ),
+                                    )
+                                    clearAction()
+                                }
+                            )
                         )
-                    )
-                    add(
-                        Material3MenuItemData(
-                            title = { Text(text = stringResource(R.string.add_to_queue)) },
-                            icon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.queue_music),
-                                    contentDescription = null,
+                        if (!isGuest) {
+                            add(
+                                Material3MenuItemData(
+                                    title = { Text(text = stringResource(R.string.add_to_queue)) },
+                                    icon = {
+                                        Icon(
+                                            painter = painterResource(R.drawable.queue_music),
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    onClick = {
+                                        onDismiss()
+                                        playerConnection.addToQueue(songSelection.map { it.toMediaItem() })
+                                        clearAction()
+                                    }
                                 )
-                            },
-                            onClick = {
-                                onDismiss()
-                                playerConnection.addToQueue(songSelection.map { it.toMediaItem() })
-                                clearAction()
-                            }
-                        )
-                    )
+                            )
+                        }
+                    }
                     add(
                         Material3MenuItemData(
                             title = { Text(text = stringResource(R.string.add_to_playlist)) },
@@ -726,6 +746,15 @@ fun SelectionMediaMetadataMenu(
                             }
                         )
                     )
+                }
+            )
+        }
+
+        item { Spacer(modifier = Modifier.height(12.dp)) }
+
+        item {
+            Material3MenuGroup(
+                items = buildList {
                     add(
                         Material3MenuItemData(
                             title = {

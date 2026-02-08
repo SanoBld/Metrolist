@@ -111,12 +111,19 @@ fun DiscordSettings(
     LaunchedEffect(discordToken) {
         val token = discordToken
         if (token.isEmpty()) {
+            discordUsername = ""
+            discordName = ""
             return@LaunchedEffect
         }
-        coroutineScope.launch(Dispatchers.IO) {
+        // Fetch user info when token changes
+        launch(Dispatchers.IO) {
             KizzyRPC.getUserInfo(token).onSuccess {
                 discordUsername = it.username
                 discordName = it.name
+            }.onFailure {
+                // Clear user info on failure
+                discordUsername = ""
+                discordName = ""
             }
         }
     }
@@ -344,14 +351,14 @@ fun RichPresence(song: Song?, currentPlaybackTimeMillis: Long = 0L) {
                         modifier =
                         Modifier
                             .size(96.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(3.dp))
                             .align(Alignment.TopStart)
                             .run {
                                 if (song == null) {
                                     border(
                                         2.dp,
                                         MaterialTheme.colorScheme.onSurface,
-                                        RoundedCornerShape(12.dp)
+                                        RoundedCornerShape(3.dp)
                                     )
                                 } else {
                                     this
@@ -445,7 +452,7 @@ fun RichPresence(song: Song?, currentPlaybackTimeMillis: Long = 0L) {
                 onClick = {
                     val intent = Intent(
                         Intent.ACTION_VIEW,
-                        "https://github.com/mostafaalagamy/Metrolist".toUri()
+                        "https://github.com/MetrolistGroup/Metrolist".toUri()
                     )
                     context.startActivity(intent)
                 },

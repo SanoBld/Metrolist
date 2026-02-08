@@ -6,10 +6,8 @@
 package com.metrolist.music.ui.screens.settings
 
 import android.os.Build
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +32,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
@@ -84,6 +84,7 @@ import com.metrolist.music.constants.ShowTopPlaylistKey
 import com.metrolist.music.constants.ShowUploadedPlaylistKey
 import com.metrolist.music.constants.SliderStyle
 import com.metrolist.music.constants.SliderStyleKey
+import com.metrolist.music.constants.SquigglySliderKey
 import com.metrolist.music.constants.SlimNavBarKey
 import com.metrolist.music.constants.SwipeSensitivityKey
 import com.metrolist.music.constants.SwipeThumbnailKey
@@ -97,11 +98,13 @@ import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.PlayerSliderTrack
+import com.metrolist.music.ui.theme.PlayerSliderColors
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.IconUtils
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.ui.component.WavySlider
+import com.metrolist.music.ui.component.SquigglySlider
 import kotlin.math.roundToInt
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.rememberCoroutineScope
@@ -109,6 +112,11 @@ import kotlinx.coroutines.launch
 import android.content.Intent
 import android.app.Activity
 import androidx.compose.material3.SnackbarHostState
+import com.metrolist.music.constants.CropAlbumArtKey
+import com.metrolist.music.constants.SelectedThemeColorKey
+import com.metrolist.music.ui.theme.DefaultThemeColor
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -126,6 +134,12 @@ fun AppearanceSettings(
         EnableDynamicIconKey,
         defaultValue = true
     )
+    val (selectedThemeColorInt) = rememberPreference(
+        SelectedThemeColorKey,
+        defaultValue = DefaultThemeColor.toArgb()
+    )
+    // Check if user has selected a custom color (not the default/dynamic color)
+    val isUsingCustomColor = selectedThemeColorInt != DefaultThemeColor.toArgb()
     val coroutineScope = rememberCoroutineScope()
 
     fun handleIconChange(enabled: Boolean) {
@@ -147,10 +161,7 @@ fun AppearanceSettings(
         }
     }
 
-    val (darkMode, onDarkModeChange) = rememberEnumPreference(
-        DarkModeKey,
-        defaultValue = DarkMode.AUTO
-    )
+
     val (useNewPlayerDesign, onUseNewPlayerDesignChange) = rememberPreference(
         UseNewPlayerDesignKey,
         defaultValue = true
@@ -163,12 +174,16 @@ fun AppearanceSettings(
         HidePlayerThumbnailKey,
         defaultValue = false
     )
+    val (cropAlbumArt, onCropAlbumArtChange) = rememberPreference(
+        CropAlbumArtKey,
+        defaultValue = false
+    )
     val (playerBackground, onPlayerBackgroundChange) =
         rememberEnumPreference(
             PlayerBackgroundStyleKey,
             defaultValue = PlayerBackgroundStyle.DEFAULT,
         )
-    val (pureBlack, onPureBlackChange) = rememberPreference(PureBlackKey, defaultValue = false)
+
     val (defaultOpenTab, onDefaultOpenTabChange) = rememberEnumPreference(
         DefaultOpenTabKey,
         defaultValue = NavigationTab.HOME
@@ -197,6 +212,10 @@ fun AppearanceSettings(
     val (sliderStyle, onSliderStyleChange) = rememberEnumPreference(
         SliderStyleKey,
         defaultValue = SliderStyle.DEFAULT
+    )
+    val (squigglySlider, onSquigglySliderChange) = rememberPreference(
+        SquigglySliderKey,
+        defaultValue = false
     )
     val (swipeThumbnail, onSwipeThumbnailChange) = rememberPreference(
         SwipeThumbnailKey,
@@ -251,11 +270,7 @@ fun AppearanceSettings(
         it != PlayerBackgroundStyle.BLUR || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     }
 
-    val isSystemInDarkTheme = isSystemInDarkTheme()
-    val useDarkTheme =
-        remember(darkMode, isSystemInDarkTheme) {
-            if (darkMode == DarkMode.AUTO) isSystemInDarkTheme else darkMode == DarkMode.ON
-        }
+
 
     val (defaultChip, onDefaultChipChange) = rememberEnumPreference(
         key = ChipSortTypeKey,
@@ -266,9 +281,7 @@ fun AppearanceSettings(
         mutableStateOf(false)
     }
 
-    var showDarkModeDialog by rememberSaveable {
-        mutableStateOf(false)
-    }
+
 
     var showPlayerBackgroundDialog by rememberSaveable {
         mutableStateOf(false)
@@ -505,25 +518,6 @@ fun AppearanceSettings(
         )
     }
 
-    if (showDarkModeDialog) {
-        EnumDialog(
-            onDismiss = { showDarkModeDialog = false },
-            onSelect = {
-                onDarkModeChange(it)
-                showDarkModeDialog = false
-            },
-            title = stringResource(R.string.dark_theme),
-            current = darkMode,
-            values = DarkMode.values().toList(),
-            valueText = {
-                when (it) {
-                    DarkMode.ON -> stringResource(R.string.dark_theme_on)
-                    DarkMode.OFF -> stringResource(R.string.dark_theme_off)
-                    DarkMode.AUTO -> stringResource(R.string.dark_theme_follow_system)
-                }
-            }
-        )
-    }
 
     var showDefaultOpenTabDialog by rememberSaveable {
         mutableStateOf(false)
@@ -611,125 +605,172 @@ fun AppearanceSettings(
                 showSliderOptionDialog = false
             }
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier
-                        .aspectRatio(1f)
-                        .weight(1f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(
-                            1.dp,
-                            if (sliderStyle == SliderStyle.DEFAULT) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                            RoundedCornerShape(16.dp)
-                        )
-                        .clickable {
-                            onSliderStyleChange(SliderStyle.DEFAULT)
-                            showSliderOptionDialog = false
-                        }
-                        .padding(16.dp)
-                ) {
-                    var sliderValue by remember {
-                        mutableFloatStateOf(0.5f)
-                    }
-                    Slider(
-                        value = sliderValue,
-                        valueRange = 0f..1f,
-                        onValueChange = {
-                            sliderValue = it
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = stringResource(R.string.default_),
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                }
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier
-                        .aspectRatio(1f)
-                        .weight(1f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(
-                            1.dp,
-                            if (sliderStyle == SliderStyle.WAVY) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                            RoundedCornerShape(16.dp)
-                        )
-                        .clickable {
-                            onSliderStyleChange(SliderStyle.WAVY)
-                            showSliderOptionDialog = false
-                        }
-                        .padding(16.dp)
-                ) {
-                    var sliderValue by remember {
-                        mutableFloatStateOf(0.5f)
-                    }
-                    WavySlider(
-                        value = sliderValue,
-                        valueRange = 0f..1f,
-                        onValueChange = {
-                            sliderValue = it
-                        },
-                        modifier = Modifier.weight(1f),
-                        isPlaying = true
-                    )
-                    Text(
-                        text = stringResource(R.string.wavy),
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                }
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier
-                        .aspectRatio(1f)
-                        .weight(1f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(
-                            1.dp,
-                            if (sliderStyle == SliderStyle.SLIM) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                            RoundedCornerShape(16.dp)
-                        )
-                        .clickable {
-                            onSliderStyleChange(SliderStyle.SLIM)
-                            showSliderOptionDialog = false
-                        }
-                        .padding(16.dp)
-                ) {
-                    var sliderValue by remember {
-                        mutableFloatStateOf(0.5f)
-                    }
-                    Slider(
-                        value = sliderValue,
-                        valueRange = 0f..1f,
-                        onValueChange = {
-                            sliderValue = it
-                        },
-                        thumb = { Spacer(modifier = Modifier.size(0.dp)) },
-                        track = { sliderState ->
-                            PlayerSliderTrack(
-                                sliderState = sliderState,
-                                colors = SliderDefaults.colors()
-                            )
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onPress = {}
-                                )
-                            }
-                    )
+            val sliderPreviewColors = PlayerSliderColors.getSliderColors(
+                MaterialTheme.colorScheme.primary,
+                PlayerBackgroundStyle.DEFAULT,
+                isSystemInDarkTheme()
+            )
 
-                    Text(
-                        text = stringResource(R.string.slim),
-                        style = MaterialTheme.typography.labelLarge
-                    )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .aspectRatio(1f)
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .border(
+                                1.dp,
+                                if (sliderStyle == SliderStyle.DEFAULT && !squigglySlider) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                RoundedCornerShape(16.dp)
+                            )
+                            .clickable {
+                                onSliderStyleChange(SliderStyle.DEFAULT)
+                                onSquigglySliderChange(false)
+                                showSliderOptionDialog = false
+                            }
+                            .padding(12.dp)
+                    ) {
+                        val sliderValue = 0.35f
+                        Slider(
+                            value = sliderValue,
+                            valueRange = 0f..1f,
+                            onValueChange = { /* preview only */ },
+                            colors = sliderPreviewColors,
+                            enabled = false,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = stringResource(R.string.default_),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .aspectRatio(1f)
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .border(
+                                1.dp,
+                                if (sliderStyle == SliderStyle.WAVY && !squigglySlider) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                RoundedCornerShape(16.dp)
+                            )
+                            .clickable {
+                                onSliderStyleChange(SliderStyle.WAVY)
+                                onSquigglySliderChange(false)
+                                showSliderOptionDialog = false
+                            }
+                            .padding(12.dp)
+                    ) {
+                        val sliderValue = 0.5f
+                        WavySlider(
+                            value = sliderValue,
+                            valueRange = 0f..1f,
+                            onValueChange = { /* preview only */ },
+                            colors = sliderPreviewColors,
+                            modifier = Modifier.weight(1f),
+                            isPlaying = true,
+                            enabled = false
+                        )
+                        Text(
+                            text = stringResource(R.string.wavy),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .aspectRatio(1f)
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .border(
+                                1.dp,
+                                if (sliderStyle == SliderStyle.SLIM) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                RoundedCornerShape(16.dp)
+                            )
+                            .clickable {
+                                onSliderStyleChange(SliderStyle.SLIM)
+                                onSquigglySliderChange(false)
+                                showSliderOptionDialog = false
+                            }
+                            .padding(12.dp)
+                    ) {
+                        val sliderValue = 0.65f
+                        Slider(
+                            value = sliderValue,
+                            valueRange = 0f..1f,
+                            onValueChange = { /* preview only */ },
+                            thumb = { Spacer(modifier = Modifier.size(0.dp)) },
+                            track = { sliderState ->
+                                PlayerSliderTrack(
+                                    sliderState = sliderState,
+                                    colors = sliderPreviewColors
+                                )
+                            },
+                            colors = sliderPreviewColors,
+                            enabled = false,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        Text(
+                            text = stringResource(R.string.slim),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .aspectRatio(1f)
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .border(
+                                1.dp,
+                                if (sliderStyle == SliderStyle.WAVY && squigglySlider) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                RoundedCornerShape(16.dp)
+                            )
+                            .clickable {
+                                onSliderStyleChange(SliderStyle.WAVY)
+                                onSquigglySliderChange(true)
+                                showSliderOptionDialog = false
+                            }
+                            .padding(12.dp)
+                    ) {
+                        val sliderValue = 0.5f
+                        SquigglySlider(
+                            value = sliderValue,
+                            valueRange = 0f..1f,
+                            onValueChange = { /* preview only */ },
+                            modifier = Modifier.weight(1f),
+                            enabled = false,
+                            colors = sliderPreviewColors,
+                            isPlaying = true,
+                        )
+                        Text(
+                            text = stringResource(R.string.squiggly),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -766,57 +807,21 @@ fun AppearanceSettings(
                         onClick = { handleIconChange(!enableDynamicIcon) }
                     )
                 )
-                add(
-                    Material3SettingsItem(
-                        icon = painterResource(R.drawable.palette),
-                        title = { Text(stringResource(R.string.enable_dynamic_theme)) },
-                        trailingContent = {
-                            Switch(
-                                checked = dynamicTheme,
-                                onCheckedChange = onDynamicThemeChange,
-                                thumbContent = {
-                                    Icon(
-                                        painter = painterResource(
-                                            id = if (dynamicTheme) R.drawable.check else R.drawable.close
-                                        ),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(SwitchDefaults.IconSize)
-                                    )
-                                }
-                            )
-                        },
-                        onClick = { onDynamicThemeChange(!dynamicTheme) }
-                    )
-                )
-                add(
-                    Material3SettingsItem(
-                        icon = painterResource(R.drawable.dark_mode),
-                        title = { Text(stringResource(R.string.dark_theme)) },
-                        description = {
-                            Text(
-                                when (darkMode) {
-                                    DarkMode.ON -> stringResource(R.string.dark_theme_on)
-                                    DarkMode.OFF -> stringResource(R.string.dark_theme_off)
-                                    DarkMode.AUTO -> stringResource(R.string.dark_theme_follow_system)
-                                }
-                            )
-                        },
-                        onClick = { showDarkModeDialog = true }
-                    )
-                )
-                if (useDarkTheme) {
+                // Only show dynamic theme option when using the default/dynamic color
+                // When a custom color is selected, dynamic theme is automatically disabled
+                if (!isUsingCustomColor) {
                     add(
                         Material3SettingsItem(
-                            icon = painterResource(R.drawable.contrast),
-                            title = { Text(stringResource(R.string.pure_black)) },
+                            icon = painterResource(R.drawable.palette),
+                            title = { Text(stringResource(R.string.enable_dynamic_theme)) },
                             trailingContent = {
                                 Switch(
-                                    checked = pureBlack,
-                                    onCheckedChange = onPureBlackChange,
+                                    checked = dynamicTheme,
+                                    onCheckedChange = onDynamicThemeChange,
                                     thumbContent = {
                                         Icon(
                                             painter = painterResource(
-                                                id = if (pureBlack) R.drawable.check else R.drawable.close
+                                                id = if (dynamicTheme) R.drawable.check else R.drawable.close
                                             ),
                                             contentDescription = null,
                                             modifier = Modifier.size(SwitchDefaults.IconSize)
@@ -824,10 +829,18 @@ fun AppearanceSettings(
                                     }
                                 )
                             },
-                            onClick = { onPureBlackChange(!pureBlack) }
+                            onClick = { onDynamicThemeChange(!dynamicTheme) }
                         )
                     )
                 }
+                add(
+                    Material3SettingsItem(
+                        icon = painterResource(R.drawable.palette),
+                        title = { Text(stringResource(R.string.theme)) },
+                        description = { Text(stringResource(R.string.theme_desc)) },
+                        onClick = { navController.navigate("settings/appearance/theme") }
+                    )
+                )
             }
         )
 
@@ -890,6 +903,8 @@ fun AppearanceSettings(
 
         Spacer(modifier = Modifier.height(27.dp))
 
+        var showSensitivityDialog by rememberSaveable { mutableStateOf(false) }
+
         Material3SettingsGroup(
             title = stringResource(R.string.player),
             items = listOf(
@@ -949,6 +964,27 @@ fun AppearanceSettings(
                     onClick = { onHidePlayerThumbnailChange(!hidePlayerThumbnail) }
                 ),
                 Material3SettingsItem(
+                    icon = painterResource(R.drawable.crop),
+                    title = { Text(stringResource(R.string.crop_album_art)) },
+                    description = { Text(stringResource(R.string.crop_album_art_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = cropAlbumArt,
+                            onCheckedChange = onCropAlbumArtChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (cropAlbumArt) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    },
+                    onClick = { onCropAlbumArtChange(!cropAlbumArt) }
+                ),
+                Material3SettingsItem(
                     icon = painterResource(R.drawable.palette),
                     title = { Text(stringResource(R.string.player_buttons_style)) },
                     description = {
@@ -996,97 +1032,86 @@ fun AppearanceSettings(
                     },
                     onClick = { onSwipeThumbnailChange(!swipeThumbnail) }
                 )
-            )
+            ) + if (swipeThumbnail) listOf(
+                Material3SettingsItem(
+                    icon = painterResource(R.drawable.tune),
+                    title = { Text(stringResource(R.string.swipe_sensitivity)) },
+                    description = {
+                        Text(
+                            stringResource(
+                                R.string.sensitivity_percentage,
+                                (swipeSensitivity * 100).roundToInt()
+                            )
+                        )
+                    },
+                    onClick = { showSensitivityDialog = true }
+                )
+            ) else emptyList()
         )
 
-        AnimatedVisibility(swipeThumbnail) {
-            var showSensitivityDialog by rememberSaveable { mutableStateOf(false) }
+        if (showSensitivityDialog) {
+            var tempSensitivity by remember { mutableFloatStateOf(swipeSensitivity) }
 
-            if (showSensitivityDialog) {
-                var tempSensitivity by remember { mutableFloatStateOf(swipeSensitivity) }
-
-                DefaultDialog(
-                    onDismiss = {
-                        tempSensitivity = swipeSensitivity
-                        showSensitivityDialog = false
-                    },
-                    buttons = {
-                        TextButton(
-                            onClick = {
-                                tempSensitivity = 0.73f
-                            }
-                        ) {
-                            Text(stringResource(R.string.reset))
+            DefaultDialog(
+                onDismiss = {
+                    tempSensitivity = swipeSensitivity
+                    showSensitivityDialog = false
+                },
+                buttons = {
+                    TextButton(
+                        onClick = {
+                            tempSensitivity = 0.73f
                         }
-
-                        Spacer(modifier = Modifier.weight(1f))
-
-                        TextButton(
-                            onClick = {
-                                tempSensitivity = swipeSensitivity
-                                showSensitivityDialog = false
-                            }
-                        ) {
-                            Text(stringResource(android.R.string.cancel))
-                        }
-                        TextButton(
-                            onClick = {
-                                onSwipeSensitivityChange(tempSensitivity)
-                                showSensitivityDialog = false
-                            }
-                        ) {
-                            Text(stringResource(android.R.string.ok))
-                        }
-                    }
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(16.dp)
                     ) {
-                        Text(
-                            text = stringResource(R.string.swipe_sensitivity),
-                            style = MaterialTheme.typography.headlineSmall,
-                            modifier = Modifier.padding(bottom = 16.dp)
-                        )
+                        Text(stringResource(R.string.reset))
+                    }
 
-                        Text(
-                            text = stringResource(
-                                R.string.sensitivity_percentage,
-                                (tempSensitivity * 100).roundToInt()
-                            ),
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(bottom = 16.dp)
-                        )
+                    Spacer(modifier = Modifier.weight(1f))
 
-                        Slider(
-                            value = tempSensitivity,
-                            onValueChange = { tempSensitivity = it },
-                            valueRange = 0f..1f,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                    TextButton(
+                        onClick = {
+                            tempSensitivity = swipeSensitivity
+                            showSensitivityDialog = false
+                        }
+                    ) {
+                        Text(stringResource(android.R.string.cancel))
+                    }
+                    TextButton(
+                        onClick = {
+                            onSwipeSensitivityChange(tempSensitivity)
+                            showSensitivityDialog = false
+                        }
+                    ) {
+                        Text(stringResource(android.R.string.ok))
                     }
                 }
-            }
-            Column {
-                Spacer(modifier = Modifier.height(27.dp))
-                Material3SettingsGroup(
-                    title = "",
-                    items = listOf(
-                        Material3SettingsItem(
-                            icon = painterResource(R.drawable.tune),
-                            title = { Text(stringResource(R.string.swipe_sensitivity)) },
-                            description = {
-                                Text(
-                                    stringResource(
-                                        R.string.sensitivity_percentage,
-                                        (swipeSensitivity * 100).roundToInt()
-                                    )
-                                )
-                            },
-                            onClick = { showSensitivityDialog = true }
-                        )
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.swipe_sensitivity),
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.padding(bottom = 16.dp)
                     )
-                )
+
+                    Text(
+                        text = stringResource(
+                            R.string.sensitivity_percentage,
+                            (tempSensitivity * 100).roundToInt()
+                        ),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    Slider(
+                        value = tempSensitivity,
+                        onValueChange = { tempSensitivity = it },
+                        valueRange = 0f..1f,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 
@@ -1397,27 +1422,28 @@ fun AppearanceSettings(
                         )
                     },
                     onClick = { onShowCachedPlaylistChange(!showCachedPlaylist) }
-                ),
-                Material3SettingsItem(
-                    icon = painterResource(R.drawable.backup),
-                    title = { Text(stringResource(R.string.show_uploaded_playlist)) },
-                    trailingContent = {
-                        Switch(
-                            checked = showUploadedPlaylist,
-                            onCheckedChange = onShowUploadedPlaylistChange,
-                            thumbContent = {
-                                Icon(
-                                    painter = painterResource(
-                                        id = if (showUploadedPlaylist) R.drawable.check else R.drawable.close
-                                    ),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(SwitchDefaults.IconSize)
-                                )
-                            }
-                        )
-                    },
-                    onClick = { onShowUploadedPlaylistChange(!showUploadedPlaylist) }
                 )
+                // Uploaded songs feature is temporarily disabled
+                // Material3SettingsItem(
+                //     icon = painterResource(R.drawable.backup),
+                //     title = { Text(stringResource(R.string.show_uploaded_playlist)) },
+                //     trailingContent = {
+                //         Switch(
+                //             checked = showUploadedPlaylist,
+                //             onCheckedChange = onShowUploadedPlaylistChange,
+                //             thumbContent = {
+                //                 Icon(
+                //                     painter = painterResource(
+                //                         id = if (showUploadedPlaylist) R.drawable.check else R.drawable.close
+                //                     ),
+                //                     contentDescription = null,
+                //                     modifier = Modifier.size(SwitchDefaults.IconSize)
+                //                 )
+                //             }
+                //         )
+                //     },
+                //     onClick = { onShowUploadedPlaylistChange(!showUploadedPlaylist) }
+                // )
             )
         )
         Spacer(modifier = Modifier.height(16.dp))

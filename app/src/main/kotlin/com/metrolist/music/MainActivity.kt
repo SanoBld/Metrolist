@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -128,6 +129,7 @@ import com.metrolist.music.constants.DarkModeKey
 import com.metrolist.music.constants.DefaultOpenTabKey
 import com.metrolist.music.constants.DisableScreenshotKey
 import com.metrolist.music.constants.DynamicThemeKey
+import com.metrolist.music.constants.ListenTogetherUsernameKey
 import com.metrolist.music.constants.MiniPlayerBottomSpacing
 import com.metrolist.music.constants.MiniPlayerHeight
 import com.metrolist.music.constants.NavigationBarAnimationSpec
@@ -135,6 +137,7 @@ import com.metrolist.music.constants.NavigationBarHeight
 import com.metrolist.music.constants.PauseSearchHistoryKey
 import com.metrolist.music.constants.PureBlackKey
 import com.metrolist.music.constants.SYSTEM_DEFAULT
+import com.metrolist.music.constants.SelectedThemeColorKey
 import com.metrolist.music.constants.SlimNavBarHeight
 import com.metrolist.music.constants.SlimNavBarKey
 import com.metrolist.music.constants.StopMusicOnTaskClearKey
@@ -158,6 +161,7 @@ import com.metrolist.music.ui.component.LocalBottomSheetPageState
 import com.metrolist.music.ui.component.LocalMenuState
 import com.metrolist.music.ui.component.rememberBottomSheetState
 import com.metrolist.music.ui.component.shimmer.ShimmerTheme
+import com.metrolist.music.ui.menu.ListenTogetherDialog
 import com.metrolist.music.ui.menu.YouTubeSongMenu
 import com.metrolist.music.ui.player.BottomSheetPlayer
 import com.metrolist.music.ui.screens.Screens
@@ -191,7 +195,6 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Locale
 import javax.inject.Inject
-import kotlin.time.Duration.Companion.days
 
 @Suppress("DEPRECATION", "ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
 @AndroidEntryPoint
@@ -209,6 +212,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var syncUtils: SyncUtils
+    
+    @Inject
+    lateinit var listenTogetherManager: com.metrolist.music.listentogether.ListenTogetherManager
 
     private lateinit var navController: NavHostController
     private var pendingIntent: Intent? = null
@@ -220,10 +226,14 @@ class MainActivity : ComponentActivity() {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             if (service is MusicBinder) {
                 playerConnection = PlayerConnection(this@MainActivity, service, database, lifecycleScope)
+                // Connect Listen Together manager to player
+                listenTogetherManager.setPlayerConnection(playerConnection)
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            // Disconnect Listen Together manager
+            listenTogetherManager.setPlayerConnection(null)
             playerConnection?.dispose()
             playerConnection = null
         }
@@ -280,18 +290,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.decorView.layoutDirection = View.LAYOUT_DIRECTION_LTR
         WindowCompat.setDecorFitsSystemWindows(window, false)
-
-        // Force high refresh rate (120Hz) for smooth animations
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val display = display ?: windowManager.defaultDisplay
-            val supportedModes = display.supportedModes
-            val highRefreshRateMode = supportedModes.maxByOrNull { it.refreshRate }
-            highRefreshRateMode?.let { mode ->
-                window.attributes = window.attributes.also { params ->
-                    params.preferredDisplayModeId = mode.modeId
-                }
-            }
-        }
+        
+        // Initialize Listen Together manager
+        listenTogetherManager.initialize()
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             val locale = dataStore[AppLanguageKey]
@@ -345,40 +346,41 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(checkForUpdates) {
             if (checkForUpdates) {
                 withContext(Dispatchers.IO) {
-                    if (System.currentTimeMillis() - Updater.lastCheckTime > 1.days.inWholeMilliseconds) {
-                        val updatesEnabled = dataStore.get(CheckForUpdatesKey, true)
-                        val notifEnabled = dataStore.get(UpdateNotificationsEnabledKey, true)
-                        if (!updatesEnabled) return@withContext
-                        Updater.getLatestVersionName().onSuccess {
-                            onLatestVersionNameChange(it)
-                            if (it != BuildConfig.VERSION_NAME && notifEnabled) {
-                                val downloadUrl = Updater.getLatestDownloadUrl()
-                                val intent = Intent(Intent.ACTION_VIEW, downloadUrl.toUri())
+                    val updatesEnabled = dataStore.get(CheckForUpdatesKey, true)
+                    val notifEnabled = dataStore.get(UpdateNotificationsEnabledKey, true)
+                    if (!updatesEnabled) return@withContext
+                    
+                    Updater.checkForUpdate().onSuccess { (releaseInfo, hasUpdate) ->
+                        if (releaseInfo != null) {
+                            onLatestVersionNameChange(releaseInfo.versionName)
+                            if (hasUpdate && notifEnabled) {
+                                val downloadUrl = Updater.getDownloadUrlForCurrentVariant(releaseInfo)
+                                if (downloadUrl != null) {
+                                    val intent = Intent(Intent.ACTION_VIEW, downloadUrl.toUri())
 
-                                val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-                                    (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-                                val pending = PendingIntent.getActivity(this@MainActivity, 1001, intent, flags)
+                                    val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                                        (PendingIntent.FLAG_IMMUTABLE)
+                                    val pending = PendingIntent.getActivity(this@MainActivity, 1001, intent, flags)
 
-                                val notif = NotificationCompat.Builder(this@MainActivity, "updates")
-                                    .setSmallIcon(R.drawable.update)
-                                    .setContentTitle(getString(R.string.update_available_title))
-                                    .setContentText(it)
-                                    .setContentIntent(pending)
-                                    .setAutoCancel(true)
-                                    .build()
+                                    val notif = NotificationCompat.Builder(this@MainActivity, "updates")
+                                        .setSmallIcon(R.drawable.update)
+                                        .setContentTitle(getString(R.string.update_available_title))
+                                        .setContentText(releaseInfo.versionName)
+                                        .setContentIntent(pending)
+                                        .setAutoCancel(true)
+                                        .build()
 
-                                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                                    ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-                                ) {
-                                    NotificationManagerCompat.from(this@MainActivity).notify(1001, notif)
+                                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                                        ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                                    ) {
+                                        NotificationManagerCompat.from(this@MainActivity).notify(1001, notif)
+                                    }
                                 }
                             }
                         }
                     }
                 }
             } else {
-                // when the user disables updates, reset to the current version
-                // to trick the app into thinking it's on the latest version
                 onLatestVersionNameChange(BuildConfig.VERSION_NAME)
             }
         }
@@ -399,14 +401,23 @@ class MainActivity : ComponentActivity() {
             pureBlackEnabled && useDarkTheme
         }
 
+        val (selectedThemeColorInt) = rememberPreference(SelectedThemeColorKey, defaultValue = DefaultThemeColor.toArgb())
+        val selectedThemeColor = Color(selectedThemeColorInt)
+
         var themeColor by rememberSaveable(stateSaver = ColorSaver) {
-            mutableStateOf(DefaultThemeColor)
+            mutableStateOf(selectedThemeColor)
         }
 
-        LaunchedEffect(playerConnection, enableDynamicTheme) {
+        LaunchedEffect(selectedThemeColor) {
+            if (!enableDynamicTheme) {
+                themeColor = selectedThemeColor
+            }
+        }
+
+        LaunchedEffect(playerConnection, enableDynamicTheme, selectedThemeColor) {
             val playerConnection = playerConnection
             if (!enableDynamicTheme || playerConnection == null) {
-                themeColor = DefaultThemeColor
+                themeColor = selectedThemeColor
                 return@LaunchedEffect
             }
 
@@ -424,14 +435,14 @@ class MainActivity : ComponentActivity() {
                                     .crossfade(false)
                                     .build()
                             )
-                            themeColor = result.image?.toBitmap()?.extractThemeColor() ?: DefaultThemeColor
+                            themeColor = result.image?.toBitmap()?.extractThemeColor() ?: selectedThemeColor
                         } catch (e: Exception) {
                             // Fallback to default on error
-                            themeColor = DefaultThemeColor
+                            themeColor = selectedThemeColor
                         }
                     }
                 } else {
-                    themeColor = DefaultThemeColor
+                    themeColor = selectedThemeColor
                 }
             }
         }
@@ -578,8 +589,8 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(navBackStackEntry) {
                     if (inSearchScreen) {
                         val searchQuery = withContext(Dispatchers.IO) {
-                            if (navBackStackEntry?.arguments?.getString("query",)!!.contains("%",)) {
-                                navBackStackEntry?.arguments?.getString("query",)!!
+                            if (navBackStackEntry?.arguments?.getString("query")!!.contains("%")) {
+                                navBackStackEntry?.arguments?.getString("query")!!
                             } else {
                                 URLDecoder.decode(
                                     navBackStackEntry?.arguments?.getString("query")!!,
@@ -687,6 +698,13 @@ class MainActivity : ComponentActivity() {
                 }
 
                 var showAccountDialog by remember { mutableStateOf(false) }
+                var showListenTogetherDialog by rememberSaveable { mutableStateOf(false) }
+                val pendingSuggestions by listenTogetherManager.pendingSuggestions.collectAsState()
+                val mediaMetadata by playerConnection?.mediaMetadata?.collectAsState() ?: remember { mutableStateOf(null) }
+                val listenTogetherRole by listenTogetherManager.role.collectAsState()
+                val listenTogetherStatus by listenTogetherManager.connectionState.collectAsState()
+
+
 
                 val baseBg = if (pureBlack) Color.Black else MaterialTheme.colorScheme.surfaceContainer
 
@@ -698,20 +716,21 @@ class MainActivity : ComponentActivity() {
                     LocalDownloadUtil provides downloadUtil,
                     LocalShimmerTheme provides ShimmerTheme,
                     LocalSyncUtils provides syncUtils,
+                    LocalListenTogetherManager provides listenTogetherManager,
                 ) {
+                    ListenTogetherDialog(
+                        visible = showListenTogetherDialog,
+                        mediaMetadata = mediaMetadata,
+                        onDismiss = { showListenTogetherDialog = false }
+                    )
+
                     Scaffold(
                         snackbarHost = { SnackbarHost(snackbarHostState) },
                         topBar = {
                             AnimatedVisibility(
                                 visible = shouldShowTopBar,
-                                enter = slideInHorizontally(
-                                    initialOffsetX = { -it / 4 },
-                                    animationSpec = tween(durationMillis = 100)
-                                ) + fadeIn(animationSpec = tween(durationMillis = 100)),
-                                exit = slideOutHorizontally(
-                                    targetOffsetX = { -it / 4 },
-                                    animationSpec = tween(durationMillis = 100)
-                                ) + fadeOut(animationSpec = tween(durationMillis = 100))
+                                enter = fadeIn(animationSpec = tween(durationMillis = 300)),
+                                exit = fadeOut(animationSpec = tween(durationMillis = 200))
                             ) {
                                 Row {
                                     TopAppBar(
@@ -733,6 +752,43 @@ class MainActivity : ComponentActivity() {
                                                     painter = painterResource(R.drawable.stats),
                                                     contentDescription = stringResource(R.string.stats)
                                                 )
+                                            }
+                                            IconButton(onClick = { showListenTogetherDialog = true }) {
+                                                BadgedBox(badge = {
+                                                    if (pendingSuggestions.isNotEmpty()) {
+                                                        Badge {
+                                                            Text(text = pendingSuggestions.size.toString())
+                                                        }
+                                                    }
+                                                }) {
+                                                    Box {
+                                                        Icon(
+                                                            painter = painterResource(R.drawable.group),
+                                                            contentDescription = stringResource(R.string.listen_together),
+                                                            modifier = Modifier.size(24.dp)
+                                                        )
+
+                                                        if (listenTogetherStatus == com.metrolist.music.listentogether.ConnectionState.CONNECTED &&
+                                                            listenTogetherRole != com.metrolist.music.listentogether.RoomRole.NONE
+                                                        ) {
+                                                            Icon(
+                                                                painter = painterResource(
+                                                                    if (listenTogetherRole == com.metrolist.music.listentogether.RoomRole.HOST) {
+                                                                        R.drawable.crown
+                                                                    } else {
+                                                                        R.drawable.share
+                                                                    }
+                                                                ),
+                                                                contentDescription = null,
+                                                                modifier = Modifier
+                                                                    .size(12.dp)
+                                                                    .align(Alignment.BottomEnd)
+                                                                    .offset(x = 4.dp, y = 4.dp),
+                                                                tint = MaterialTheme.colorScheme.primary
+                                                            )
+                                                        }
+                                                    }
+                                                }
                                             }
                                             IconButton(onClick = { showAccountDialog = true }) {
                                                 BadgedBox(badge = {
@@ -1048,6 +1104,16 @@ class MainActivity : ComponentActivity() {
         intent.removeExtra(Intent.EXTRA_TEXT)
         val coroutineScope = lifecycle.coroutineScope
 
+        val listenCode = uri.getQueryParameter("code")
+            ?: uri.getQueryParameter("room")
+            ?: uri.pathSegments.getOrNull(1)
+        val isListenLink = uri.pathSegments.firstOrNull() == "listen" || uri.host?.equals("listen", ignoreCase = true) == true
+        if (!listenCode.isNullOrBlank() && isListenLink) {
+            val username = dataStore.get(ListenTogetherUsernameKey, "").ifBlank { "Guest" }
+            listenTogetherManager.joinRoom(listenCode, username)
+            return
+        }
+
         when (val path = uri.pathSegments.firstOrNull()) {
             "playlist" -> uri.getQueryParameter("list")?.let { playlistId ->
                 if (playlistId.startsWith("OLAK5uy_")) {
@@ -1144,3 +1210,5 @@ val LocalPlayerConnection = staticCompositionLocalOf<PlayerConnection?> { error(
 val LocalPlayerAwareWindowInsets = compositionLocalOf<WindowInsets> { error("No WindowInsets provided") }
 val LocalDownloadUtil = staticCompositionLocalOf<DownloadUtil> { error("No DownloadUtil provided") }
 val LocalSyncUtils = staticCompositionLocalOf<SyncUtils> { error("No SyncUtils provided") }
+val LocalListenTogetherManager = staticCompositionLocalOf<com.metrolist.music.listentogether.ListenTogetherManager?> { null }
+val LocalIsPlayerExpanded = compositionLocalOf { false }

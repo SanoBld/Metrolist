@@ -262,7 +262,7 @@ fun LocalPlaylistScreen(
 
     val downloadUtil = LocalDownloadUtil.current
     var downloadState by remember {
-        mutableStateOf(Download.STATE_STOPPED)
+        mutableIntStateOf(Download.STATE_STOPPED)
     }
 
     val editable: Boolean = playlist?.playlist?.isEditable == true
@@ -566,9 +566,11 @@ fun LocalPlaylistScreen(
                             coroutineScope.launch {
                                 playlist?.playlist?.browseId?.let { browseId ->
                                     val setVideoId = getSetVideoId(currentItem.map.songId)
-                                    if (setVideoId?.setVideoId != null) {
+                                    setVideoId?.setVideoId?.let { setVideoIdValue ->
                                         YouTube.removeFromPlaylist(
-                                            browseId, currentItem.map.songId, setVideoId.setVideoId!!
+                                            browseId,
+                                            currentItem.map.songId,
+                                            setVideoIdValue
                                         )
                                     }
                                 }
@@ -1023,9 +1025,9 @@ fun LocalPlaylistHeader(
                         .size(240.dp)
                         .shadow(
                             elevation = 16.dp,
-                            shape = RoundedCornerShape(16.dp)
+                            shape = RoundedCornerShape(3.dp)
                         ),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(3.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     Box(
@@ -1046,10 +1048,10 @@ fun LocalPlaylistHeader(
                             .size(240.dp)
                             .shadow(
                                 elevation = 24.dp,
-                                shape = RoundedCornerShape(16.dp),
+                                shape = RoundedCornerShape(3.dp),
                                 spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
                             ),
-                        shape = RoundedCornerShape(16.dp)
+                        shape = RoundedCornerShape(3.dp)
                     ) {
                         AsyncImage(
                             model = overrideThumbnail.value ?: playlist.thumbnails[0],
@@ -1110,10 +1112,10 @@ fun LocalPlaylistHeader(
                             .size(240.dp)
                             .shadow(
                                 elevation = 24.dp,
-                                shape = RoundedCornerShape(16.dp),
+                                shape = RoundedCornerShape(3.dp),
                                 spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
                             ),
-                        shape = RoundedCornerShape(16.dp)
+                        shape = RoundedCornerShape(3.dp)
                     ) {
                         Box(modifier = Modifier.fillMaxSize()) {
                             listOf(

@@ -15,6 +15,7 @@ import java.time.ZoneOffset
 
 val EnableDynamicIconKey = booleanPreferencesKey("enableDynamicIcon")
 val DynamicThemeKey = booleanPreferencesKey("dynamicTheme")
+val SelectedThemeColorKey = intPreferencesKey("selectedThemeColor")
 val DarkModeKey = stringPreferencesKey("darkMode")
 val PureBlackKey = booleanPreferencesKey("pureBlack")
 val PureBlackMiniPlayerKey = booleanPreferencesKey("pureBlackMiniPlayer")
@@ -23,12 +24,16 @@ val DefaultOpenTabKey = stringPreferencesKey("defaultOpenTab")
 val SlimNavBarKey = booleanPreferencesKey("slimNavBar")
 val GridItemsSizeKey = stringPreferencesKey("gridItemSize")
 val SliderStyleKey = stringPreferencesKey("sliderStyle")
+val SquigglySliderKey = booleanPreferencesKey("squigglySlider")
 val SwipeToSongKey = booleanPreferencesKey("SwipeToSong")
 val SwipeToRemoveSongKey = booleanPreferencesKey("SwipeToRemoveSong")
 val UseNewPlayerDesignKey= booleanPreferencesKey("useNewPlayerDesign")
 val UseNewMiniPlayerDesignKey = booleanPreferencesKey("useNewMiniPlayerDesign")
 val HidePlayerThumbnailKey = booleanPreferencesKey("hidePlayerThumbnail")
+val CropAlbumArtKey = booleanPreferencesKey("cropAlbumArt")
 val SeekExtraSeconds = booleanPreferencesKey("seekExtraSeconds")
+val PauseOnMute = booleanPreferencesKey("pauseOnMute")
+val KeepScreenOn = booleanPreferencesKey("keepScreenOn")
 val DeveloperModeKey = booleanPreferencesKey("developerMode")
 
 enum class SliderStyle {
@@ -44,16 +49,22 @@ val ContentCountryKey = stringPreferencesKey("contentCountry")
 val EnableKugouKey = booleanPreferencesKey("enableKugou")
 val EnableLrcLibKey = booleanPreferencesKey("enableLrclib")
 val EnableBetterLyricsKey = booleanPreferencesKey("enableBetterLyrics")
+val EnableSimpMusicKey = booleanPreferencesKey("enableSimpMusic")
 val HideExplicitKey = booleanPreferencesKey("hideExplicit")
 val HideVideoSongsKey = booleanPreferencesKey("hideVideoSongs")
+val ShowArtistDescriptionKey = booleanPreferencesKey("showArtistDescription")
+val ShowArtistSubscriberCountKey = booleanPreferencesKey("showArtistSubscriberCount")
+val ShowMonthlyListenersKey = booleanPreferencesKey("showMonthlyListeners")
 val ProxyEnabledKey = booleanPreferencesKey("proxyEnabled")
 val ProxyUrlKey = stringPreferencesKey("proxyUrl")
 val ProxyTypeKey = stringPreferencesKey("proxyType")
 val ProxyUsernameKey = stringPreferencesKey("proxyUsername")
 val ProxyPasswordKey = stringPreferencesKey("proxyPassword")
 val YtmSyncKey = booleanPreferencesKey("ytmSync")
+val SelectedYtmPlaylistsKey = stringPreferencesKey("selectedYtmPlaylists")
 val CheckForUpdatesKey = booleanPreferencesKey("checkForUpdates")
 val UpdateNotificationsEnabledKey = booleanPreferencesKey("updateNotifications")
+val LastUpdateCheckTimeKey = longPreferencesKey("lastUpdateCheckTime")
 
 val AudioQualityKey = stringPreferencesKey("audioQuality")
 
@@ -62,10 +73,15 @@ enum class AudioQuality {
     HIGH,
     LOW,
 }
+
 val AudioOffload = booleanPreferencesKey("enableOffload")
 
 val PersistentQueueKey = booleanPreferencesKey("persistentQueue")
+val PersistentShuffleAcrossQueuesKey = booleanPreferencesKey("persistentShuffleAcrossQueues")
+val RememberShuffleAndRepeatKey = booleanPreferencesKey("rememberShuffleAndRepeat")
+val ShuffleModeKey = booleanPreferencesKey("shuffleMode")
 val SkipSilenceKey = booleanPreferencesKey("skipSilence")
+val SkipSilenceInstantKey = booleanPreferencesKey("skipSilenceInstant")
 val AudioNormalizationKey = booleanPreferencesKey("audioNormalization")
 val AutoLoadMoreKey = booleanPreferencesKey("autoLoadMore")
 val DisableLoadMoreWhenRepeatAllKey = booleanPreferencesKey("disableLoadMoreWhenRepeatAll")
@@ -91,6 +107,20 @@ val DiscordUseDetailsKey = booleanPreferencesKey("discordUseDetails")
 
 // Google Cast
 val EnableGoogleCastKey = booleanPreferencesKey("enableGoogleCast")
+
+// Listen Together
+val ListenTogetherServerUrlKey = stringPreferencesKey("listenTogetherServerUrl")
+val ListenTogetherUsernameKey = stringPreferencesKey("listenTogetherUsername")
+val EnableListenTogetherKey = booleanPreferencesKey("enableListenTogether")
+val ListenTogetherAutoApprovalKey = booleanPreferencesKey("listenTogetherAutoApproval")
+val ListenTogetherSyncVolumeKey = booleanPreferencesKey("listenTogetherSyncVolume")
+val ListenTogetherBlockedUsersKey = stringPreferencesKey("listenTogetherBlockedUsers")
+// Session persistence for reconnection
+val ListenTogetherSessionTokenKey = stringPreferencesKey("listenTogetherSessionToken")
+val ListenTogetherRoomCodeKey = stringPreferencesKey("listenTogetherRoomCode")
+val ListenTogetherUserIdKey = stringPreferencesKey("listenTogetherUserId")
+val ListenTogetherIsHostKey = booleanPreferencesKey("listenTogetherIsHost")
+val ListenTogetherSessionTimestampKey = longPreferencesKey("listenTogetherSessionTimestamp")
 
 val LastFMSessionKey = stringPreferencesKey("lastfmSession")
 val LastFMUsernameKey = stringPreferencesKey("lastfmUsername")
@@ -174,10 +204,12 @@ enum class SongFilter {
 }
 
 enum class ArtistFilter {
+    LIBRARY,
     LIKED
 }
 
 enum class AlbumFilter {
+    LIBRARY,
     LIKED,
     UPLOADED
 }
@@ -296,6 +328,7 @@ enum class PreferredLyricsProvider {
     LRCLIB,
     KUGOU,
     BETTER_LYRICS,
+    SIMPMUSIC,
 }
 
 enum class PlayerButtonsStyle {

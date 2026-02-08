@@ -9,6 +9,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.content.res.Configuration
+import android.text.Layout
 import android.os.Build
 import android.view.WindowManager
 import android.widget.Toast
@@ -120,6 +121,7 @@ import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import coil3.toBitmap
 import com.metrolist.music.LocalPlayerConnection
+import com.metrolist.music.LocalListenTogetherManager
 import com.metrolist.music.R
 import com.metrolist.music.constants.DarkModeKey
 import com.metrolist.music.constants.LyricsClickKey
@@ -176,7 +178,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.seconds
 
-@RequiresApi(Build.VERSION_CODES.M)
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @SuppressLint("UnusedBoxWithConstraintsScope", "StringFormatInvalid")
 @Composable
@@ -190,6 +191,8 @@ fun Lyrics(
     val density = LocalDensity.current
     val context = LocalContext.current
     val configuration = LocalConfiguration.current // Get configuration
+    val listenTogetherManager = LocalListenTogetherManager.current
+    val isGuest = listenTogetherManager?.isInRoom == true && !listenTogetherManager.isHost
 
     val landscapeOffset =
         configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -245,7 +248,7 @@ fun Lyrics(
             val isMacedonianLyrics = romanizeMacedonianLyrics && !romanizeCyrillicByLine && isMacedonian(lyrics)
 
             parsedLines.map { entry ->
-                val newEntry = LyricsEntry(entry.time, entry.text, entry.words)
+                val newEntry = LyricsEntry(entry.time, entry.text, entry.words, agent = entry.agent, isBackground = entry.isBackground)
                 
                 if (romanizeJapaneseLyrics && isJapanese(entry.text) && !isChinese(entry.text)) {
                     scope.launch {
@@ -451,6 +454,8 @@ fun Lyrics(
     val selectedIndices = remember { mutableStateListOf<Int>() }
     var showMaxSelectionToast by remember { mutableStateOf(false) } // State for showing max selection toast
 
+    val isLyricsProviderShown = lyricsEntity?.provider != null && lyricsEntity?.provider != "Unknown" && !isSelectionModeActive
+
     val lazyListState = rememberLazyListState()
     
     // Professional animation states for smooth Metrolist-style transitions
@@ -527,7 +532,8 @@ fun Lyrics(
             isSeeking = sliderPosition != null
             val position = sliderPosition ?: playerConnection.player.currentPosition
             currentPlaybackPosition = position
-            currentLineIndex = findCurrentLineIndex(lines, position)
+            val lyricsOffset = currentSong?.song?.lyricsOffset ?: 0
+            currentLineIndex = findCurrentLineIndex(lines, position + lyricsOffset)
         }
     }
 
@@ -544,7 +550,8 @@ fun Lyrics(
         if (isAnimating) return // Prevent multiple animations
         isAnimating = true
         try {
-            val itemInfo = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+            val lookUpIndex = if (isLyricsProviderShown) targetIndex + 1 else targetIndex
+            val itemInfo = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == lookUpIndex }
             if (itemInfo != null) {
                 // Item is visible, animate directly to center without sudden jumps
                 val viewportHeight = lazyListState.layoutInfo.viewportEndOffset - lazyListState.layoutInfo.viewportStartOffset
@@ -663,6 +670,21 @@ fun Lyrics(
                 if (isSeeking || isSelectionModeActive) deferredCurrentLineIndex else currentLineIndex
             }
 
+            // Show lyrics provider at the top, scrolling with content
+            if (isLyricsProviderShown) {
+                item {
+                    Text(
+                        text = "Lyrics from ${lyricsEntity?.provider}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
             if (lyrics == null) {
                 item {
                     ShimmerHost {
@@ -683,6 +705,9 @@ fun Lyrics(
                     }
                 }
             } else {
+                val lyricsOffset = currentSong?.song?.lyricsOffset?.toLong() ?: 0L
+                val effectivePlaybackPosition = currentPlaybackPosition + lyricsOffset
+
                 itemsIndexed(
                     items = lines,
                     key = { index, item -> "$index-${item.time}" } // Add stable key
@@ -709,9 +734,10 @@ fun Lyrics(
                                             showMaxSelectionToast = true
                                         }
                                     }
-                                } else if (isSynced && changeLyrics) {
+                                } else if (isSynced && changeLyrics && !isGuest) {
                                     // Professional seek action with smooth animation
-                                    playerConnection.seekTo(item.time)
+                                    val lyricsOffset = currentSong?.song?.lyricsOffset ?: 0
+                                    playerConnection.seekTo((item.time - lyricsOffset).coerceAtLeast(0))
                                     // Smooth slow scroll when clicking on lyrics (3 seconds)
                                     scope.launch {
                                         // First scroll to the clicked item without animation
@@ -760,38 +786,72 @@ fun Lyrics(
                         )
                         .padding(horizontal = 24.dp, vertical = 8.dp)
                     
+                    // Check if this line shares the same time as the currently active line
+                    // This enables synchronized word-by-word animation for both main and background vocals
+                    val currentLineTime = if (displayedCurrentLineIndex >= 0 && displayedCurrentLineIndex < lines.size) {
+                        lines[displayedCurrentLineIndex].time
+                    } else -1L
+                    val isLineAtSameTime = item.time == currentLineTime
+                    val isActiveByIndex = index == displayedCurrentLineIndex
+                    val isActiveByTime = isLineAtSameTime && displayedCurrentLineIndex >= 0
+                    
                     val alpha by animateFloatAsState(
                         targetValue = when {
                             !isSynced || (isSelectionModeActive && isSelected) -> 1f
-                            index == displayedCurrentLineIndex -> 1f
+                            isActiveByIndex || isActiveByTime -> 1f
                             else -> 0.5f
                         },
                         animationSpec = tween(durationMillis = 400)
                     )
                     val scale by animateFloatAsState(
-                        targetValue = if (index == displayedCurrentLineIndex) 1.05f else 1f,
+                        targetValue = if (isActiveByIndex || isActiveByTime) 1.05f else 1f,
                         animationSpec = tween(durationMillis = 400)
                     )
 
-                    Column(
-                        modifier = itemModifier.graphicsLayer {
-                            this.alpha = alpha
-                            this.scaleX = scale
-                            this.scaleY = scale
-                        },
-                        horizontalAlignment = when (lyricsTextPosition) {
+                    // Determine alignment based on agent for multi-singer support
+                    val agentAlignment = when {
+                        item.isBackground -> Alignment.CenterHorizontally // Background always centered
+                        item.agent == "v1" -> Alignment.Start // First vocalist - left
+                        item.agent == "v2" -> Alignment.End // Second vocalist - right
+                        item.agent == "v1000" -> Alignment.CenterHorizontally // Group/chorus - center
+                        else -> when (lyricsTextPosition) {
                             LyricsPosition.LEFT -> Alignment.Start
                             LyricsPosition.CENTER -> Alignment.CenterHorizontally
                             LyricsPosition.RIGHT -> Alignment.End
                         }
-                    ) {
-                        val isActiveLine = index == displayedCurrentLineIndex && isSynced
-                        val lineColor = if (isActiveLine) expressiveAccent else expressiveAccent.copy(alpha = 0.7f)
-                        val alignment = when (lyricsTextPosition) {
+                    }
+                    
+                    val agentTextAlign = when {
+                        item.isBackground -> TextAlign.Center
+                        item.agent == "v1" -> TextAlign.Left
+                        item.agent == "v2" -> TextAlign.Right
+                        item.agent == "v1000" -> TextAlign.Center
+                        else -> when (lyricsTextPosition) {
                             LyricsPosition.LEFT -> TextAlign.Left
                             LyricsPosition.CENTER -> TextAlign.Center
                             LyricsPosition.RIGHT -> TextAlign.Right
                         }
+                    }
+                    
+                    // Smaller scale for background vocals
+                    val bgScale = if (item.isBackground) 0.85f else 1f
+
+                    Column(
+                        modifier = itemModifier.graphicsLayer {
+                            this.alpha = if (item.isBackground) alpha * 0.8f else alpha
+                            this.scaleX = scale * bgScale
+                            this.scaleY = scale * bgScale
+                        },
+                        horizontalAlignment = agentAlignment
+                    ) {
+                        // Use time-based active check to sync both main and background lines with same timestamp
+                        val isActiveLine = (isActiveByIndex || isActiveByTime) && isSynced
+                        val lineColor = if (isActiveLine) {
+                            if (item.isBackground) expressiveAccent.copy(alpha = 0.85f) else expressiveAccent
+                        } else {
+                            expressiveAccent.copy(alpha = if (item.isBackground) 0.5f else 0.7f)
+                        }
+                        val alignment = agentTextAlign
                         
                         val hasWordTimings = item.words?.isNotEmpty() == true
                         
@@ -803,14 +863,14 @@ fun Lyrics(
                                     val wordEndMs = (word.endTime * 1000).toLong()
                                     val wordDuration = wordEndMs - wordStartMs
 
-                                    val isWordActive = isActiveLine && currentPlaybackPosition >= wordStartMs && currentPlaybackPosition <= wordEndMs
-                                    val hasWordPassed = isActiveLine && currentPlaybackPosition > wordEndMs
+                                    val isWordActive = isActiveLine && effectivePlaybackPosition >= wordStartMs && effectivePlaybackPosition <= wordEndMs
+                                    val hasWordPassed = isActiveLine && effectivePlaybackPosition > wordEndMs
 
                                     val transitionProgress = when {
                                         !isActiveLine -> 0f
                                         hasWordPassed -> 1f
                                         isWordActive && wordDuration > 0 -> {
-                                            val elapsed = currentPlaybackPosition - wordStartMs
+                                            val elapsed = effectivePlaybackPosition - wordStartMs
                                             val linear = (elapsed.toFloat() / wordDuration).coerceIn(0f, 1f)
                                             linear * linear * (3f - 2f * linear)
                                         }
@@ -851,11 +911,11 @@ fun Lyrics(
                                     val wordEndMs = (word.endTime * 1000).toLong()
                                     val wordDuration = wordEndMs - wordStartMs
 
-                                    val isWordActive = isActiveLine && currentPlaybackPosition >= wordStartMs && currentPlaybackPosition <= wordEndMs
-                                    val hasWordPassed = isActiveLine && currentPlaybackPosition > wordEndMs
+                                    val isWordActive = isActiveLine && effectivePlaybackPosition >= wordStartMs && effectivePlaybackPosition <= wordEndMs
+                                    val hasWordPassed = isActiveLine && effectivePlaybackPosition > wordEndMs
 
                                     val fadeProgress = if (isWordActive && wordDuration > 0) {
-                                        val timeElapsed = currentPlaybackPosition - wordStartMs
+                                        val timeElapsed = effectivePlaybackPosition - wordStartMs
                                         val linear = (timeElapsed.toFloat() / wordDuration.toFloat()).coerceIn(0f, 1f)
                                         // Smooth cubic easing
                                         linear * linear * (3f - 2f * linear)
@@ -908,11 +968,11 @@ fun Lyrics(
                                     val wordEndMs = (word.endTime * 1000).toLong()
                                     val wordDuration = wordEndMs - wordStartMs
 
-                                    val isWordActive = isActiveLine && currentPlaybackPosition in wordStartMs..wordEndMs
-                                    val hasWordPassed = isActiveLine && currentPlaybackPosition > wordEndMs
+                                    val isWordActive = isActiveLine && effectivePlaybackPosition in wordStartMs..wordEndMs
+                                    val hasWordPassed = isActiveLine && effectivePlaybackPosition > wordEndMs
 
                                     val fillProgress = if (isWordActive && wordDuration > 0) {
-                                        val linear = ((currentPlaybackPosition - wordStartMs).toFloat() / wordDuration).coerceIn(0f, 1f)
+                                        val linear = ((effectivePlaybackPosition - wordStartMs).toFloat() / wordDuration).coerceIn(0f, 1f)
                                         linear * linear * (3f - 2f * linear)
                                     } else if (hasWordPassed) 1f else 0f
 
@@ -955,11 +1015,11 @@ fun Lyrics(
                                     val wordEndMs = (word.endTime * 1000).toLong()
                                     val wordDuration = wordEndMs - wordStartMs
 
-                                    val isWordActive = isActiveLine && currentPlaybackPosition >= wordStartMs && currentPlaybackPosition < wordEndMs
-                                    val hasWordPassed = (isActiveLine && currentPlaybackPosition >= wordEndMs) || (!isActiveLine && index < displayedCurrentLineIndex)
+                                    val isWordActive = isActiveLine && effectivePlaybackPosition >= wordStartMs && effectivePlaybackPosition < wordEndMs
+                                    val hasWordPassed = (isActiveLine && effectivePlaybackPosition >= wordEndMs) || (!isActiveLine && item.time < currentLineTime)
 
                                     if (isWordActive && wordDuration > 0) {
-                                        val timeElapsed = currentPlaybackPosition - wordStartMs
+                                        val timeElapsed = effectivePlaybackPosition - wordStartMs
                                         val fillProgress = (timeElapsed.toFloat() / wordDuration.toFloat()).coerceIn(0f, 1f)
                                         val breatheValue = (timeElapsed % 3000) / 3000f
                                         val breatheEffect = (kotlin.math.sin(breatheValue * Math.PI.toFloat() * 2f) * 0.03f).coerceIn(0f, 0.03f)
@@ -1006,11 +1066,11 @@ fun Lyrics(
                                     val wordEndMs = (word.endTime * 1000).toLong()
                                     val wordDuration = wordEndMs - wordStartMs
 
-                                    val isWordActive = isActiveLine && currentPlaybackPosition >= wordStartMs && currentPlaybackPosition < wordEndMs
-                                    val hasWordPassed = (isActiveLine && currentPlaybackPosition >= wordEndMs) || (!isActiveLine && index < displayedCurrentLineIndex)
+                                    val isWordActive = isActiveLine && effectivePlaybackPosition >= wordStartMs && effectivePlaybackPosition < wordEndMs
+                                    val hasWordPassed = (isActiveLine && effectivePlaybackPosition >= wordEndMs) || (!isActiveLine && item.time < currentLineTime)
 
                                     if (isWordActive && wordDuration > 0) {
-                                        val timeElapsed = currentPlaybackPosition - wordStartMs
+                                        val timeElapsed = effectivePlaybackPosition - wordStartMs
                                         val linearProgress = (timeElapsed.toFloat() / wordDuration.toFloat()).coerceIn(0f, 1f)
                                         // Smoother easing curve for more natural fill animation
                                         val fillProgress = linearProgress * linearProgress * (3f - 2f * linearProgress)
@@ -1073,11 +1133,11 @@ fun Lyrics(
                                     val wordEndMs = (word.endTime * 1000).toLong()
                                     val wordDuration = wordEndMs - wordStartMs
 
-                                    val isWordActive = isActiveLine && currentPlaybackPosition >= wordStartMs && currentPlaybackPosition < wordEndMs
-                                    val hasWordPassed = (isActiveLine && currentPlaybackPosition >= wordEndMs) || (!isActiveLine && index < displayedCurrentLineIndex)
+                                    val isWordActive = isActiveLine && effectivePlaybackPosition >= wordStartMs && effectivePlaybackPosition < wordEndMs
+                                    val hasWordPassed = (isActiveLine && effectivePlaybackPosition >= wordEndMs) || (!isActiveLine && item.time < currentLineTime)
 
                                     val rawProgress = if (isWordActive && wordDuration > 0) {
-                                        val elapsed = currentPlaybackPosition - wordStartMs
+                                        val elapsed = effectivePlaybackPosition - wordStartMs
                                         (elapsed.toFloat() / wordDuration).coerceIn(0f, 1f)
                                     } else if (hasWordPassed) 1f else 0f
 
@@ -1476,10 +1536,16 @@ fun Lyrics(
         val headerFooterEstimate = (48.dp + 14.dp + 16.dp + 20.dp + 8.dp + 28.dp * 2)
         val previewAvailableHeight = previewBoxHeight - headerFooterEstimate
 
+        val lyricsTextAlign = when (lyricsTextPosition) {
+            LyricsPosition.LEFT -> TextAlign.Left
+            LyricsPosition.CENTER -> TextAlign.Center
+            LyricsPosition.RIGHT -> TextAlign.Right
+        }
+
         val textStyleForMeasurement = TextStyle(
             color = previewTextColor,
             fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center
+            textAlign = lyricsTextAlign
         )
         val textMeasurer = rememberTextMeasurer()
 
@@ -1552,7 +1618,8 @@ fun Lyrics(
                             mediaMetadata = mediaMetadata ?: return@Box,
                             backgroundColor = previewBackgroundColor,
                             textColor = previewTextColor,
-                            secondaryTextColor = previewSecondaryTextColor
+                                secondaryTextColor = previewSecondaryTextColor,
+                                textAlign = lyricsTextAlign
                         )
                     }
 
@@ -1631,6 +1698,11 @@ fun Lyrics(
                                         backgroundColor = previewBackgroundColor.toArgb(),
                                         textColor = previewTextColor.toArgb(),
                                         secondaryTextColor = previewSecondaryTextColor.toArgb(),
+                                        lyricsAlignment = when (lyricsTextPosition) {
+                                            LyricsPosition.LEFT -> Layout.Alignment.ALIGN_NORMAL
+                                            LyricsPosition.CENTER -> Layout.Alignment.ALIGN_CENTER
+                                            LyricsPosition.RIGHT -> Layout.Alignment.ALIGN_OPPOSITE
+                                        }
                                     )
                                     val timestamp = System.currentTimeMillis()
                                     val filename = "lyrics_$timestamp"

@@ -59,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -76,9 +77,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -104,6 +109,7 @@ import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalDownloadUtil
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
+import com.metrolist.music.constants.CropAlbumArtKey
 import com.metrolist.music.constants.GridItemSize
 import com.metrolist.music.constants.GridItemsSizeKey
 import com.metrolist.music.constants.HideExplicitKey
@@ -231,6 +237,37 @@ inline fun ListItem(
         trailingContent()
     }
 }
+
+@Composable
+fun ListItem(
+    modifier: Modifier = Modifier,
+    title: String,
+    subtitle: AnnotatedString?,
+    badges: @Composable RowScope.() -> Unit = {},
+    thumbnailContent: @Composable () -> Unit,
+    trailingContent: @Composable RowScope.() -> Unit = {},
+    isSelected: Boolean? = false,
+    isActive: Boolean = false,
+) = ListItem(
+    title = title,
+    subtitle = {
+        badges()
+        if (subtitle != null) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.secondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    },
+    thumbnailContent = thumbnailContent,
+    trailingContent = trailingContent,
+    modifier = modifier,
+    isSelected = isSelected,
+    isActive = isActive
+)
 
 // merge badges and subtitle text and pass to basic list item
 @Composable
@@ -362,10 +399,9 @@ fun SongListItem(
         if (song.song.explicit) {
             Icon.Explicit()
         }
-        // COMMENTED OUT: Library icon
-        // if (showInLibraryIcon && song.song.inLibrary != null) {
-        //     Icon.Library()
-        // }
+        if (showInLibraryIcon && song.song.inLibrary != null) {
+            Icon.Library()
+        }
         if (showDownloadIcon) {
             val download by LocalDownloadUtil.current.getDownload(song.id)
                 .collectAsState(initial = null)
@@ -429,10 +465,9 @@ fun SongGridItem(
         if (showLikedIcon && song.song.liked) {
             Icon.Favorite()
         }
-        // COMMENTED OUT: Library icon
-        // if (showInLibraryIcon && song.song.inLibrary != null) {
-        //     Icon.Library()
-        // }
+        if (showInLibraryIcon && song.song.inLibrary != null) {
+            Icon.Library()
+        }
         if (showDownloadIcon) {
             val download by LocalDownloadUtil.current.getDownload(song.id).collectAsState(initial = null)
             Icon.Download(download?.state)
@@ -503,7 +538,7 @@ fun ArtistListItem(
     trailingContent: @Composable RowScope.() -> Unit = {},
 ) = ListItem(
     title = artist.artist.name,
-    subtitle = "",
+    subtitle = pluralStringResource(R.plurals.n_song, artist.songCount, artist.songCount),
     badges = badges,
     thumbnailContent = {
         AsyncImage(
@@ -535,7 +570,7 @@ fun ArtistGridItem(
     fillMaxWidth: Boolean = false,
 ) = GridItem(
     title = artist.artist.name,
-    subtitle = "",
+    subtitle = pluralStringResource(R.plurals.n_song, artist.songCount, artist.songCount),
     badges = badges,
     thumbnailContent = {
         AsyncImage(
@@ -574,7 +609,7 @@ fun AlbumListItem(
         val allDownloads by downloadUtil.downloads.collectAsState()
 
         val downloadState by remember(songs, allDownloads) {
-            mutableStateOf(
+            androidx.compose.runtime.mutableIntStateOf(
                 if (songs.isEmpty()) {
                     Download.STATE_STOPPED
                 } else {
@@ -637,7 +672,7 @@ fun AlbumGridItem(
         val allDownloads by downloadUtil.downloads.collectAsState()
 
         val downloadState by remember(songs, allDownloads) {
-            mutableStateOf(
+            androidx.compose.runtime.mutableIntStateOf(
                 if (songs.isEmpty()) {
                     Download.STATE_STOPPED
                 } else {
@@ -730,7 +765,7 @@ fun PlaylistListItem(
         val allDownloads by downloadUtil.downloads.collectAsState()
 
         val downloadState by remember(songs, allDownloads) {
-            mutableStateOf(
+            androidx.compose.runtime.mutableIntStateOf(
                 if (songs.isEmpty()) {
                     Download.STATE_STOPPED
                 } else {
@@ -811,7 +846,7 @@ fun PlaylistGridItem(
         val allDownloads by downloadUtil.downloads.collectAsState()
 
         val downloadState by remember(songs, allDownloads) {
-            mutableStateOf(
+            mutableIntStateOf(
                 if (songs.isEmpty()) {
                     Download.STATE_STOPPED
                 } else {
@@ -909,10 +944,25 @@ fun MediaMetadataListItem(
 ) {
     ListItem(
         title = mediaMetadata.title,
-        subtitle = joinByBullet(
-            mediaMetadata.artists.joinToString { it.name },
-            makeTimeString(mediaMetadata.duration * 1000L)
-        ),
+        subtitle = if (mediaMetadata.suggestedBy != null) {
+            buildAnnotatedString {
+                append(mediaMetadata.artists.joinToString { it.name })
+                append(" • ")
+                append(makeTimeString(mediaMetadata.duration * 1000L))
+                append(" • ")
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                    append(mediaMetadata.suggestedBy)
+                }
+            }
+        } else {
+            AnnotatedString(
+                joinByBullet(
+                    mediaMetadata.artists.joinToString { it.name },
+                    makeTimeString(mediaMetadata.duration * 1000L)
+                )
+            )
+        },
+        badges = { if (mediaMetadata.explicit) Icon.Explicit()},
         thumbnailContent = {
             ItemThumbnail(
                 thumbnailUrl = mediaMetadata.thumbnailUrl,
@@ -1207,6 +1257,8 @@ fun ItemThumbnail(
     isSelected: Boolean = false,
     thumbnailRatio: Float = 1f
 ) {
+    val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
+    
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
@@ -1223,6 +1275,7 @@ fun ItemThumbnail(
                     .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
                     .build(),
                 contentDescription = null,
+                contentScale = if (cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(shape)
@@ -1286,6 +1339,8 @@ fun LocalThumbnail(
     playButtonVisible: Boolean = false,
     thumbnailRatio: Float = 1f
 ) {
+    val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
+    
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
@@ -1300,6 +1355,7 @@ fun LocalThumbnail(
                 .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
                 .build(),
             contentDescription = null,
+            contentScale = if (cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
             modifier = Modifier.fillMaxSize()
         )
 
@@ -1389,6 +1445,8 @@ fun PlaylistThumbnail(
     shape: Shape,
     cacheKey: String? = null
 ) {
+    val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
+    
     when (thumbnails.size) {
         0 -> Box(
             contentAlignment = Alignment.Center,
@@ -1408,7 +1466,7 @@ fun PlaylistThumbnail(
                 .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
                 .build(),
             contentDescription = null,
-            contentScale = ContentScale.Crop,
+            contentScale = if (cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
             placeholder = painterResource(R.drawable.queue_music),
             error = painterResource(R.drawable.queue_music),
             modifier = Modifier
@@ -1435,7 +1493,7 @@ fun PlaylistThumbnail(
                         .networkCachePolicy(coil3.request.CachePolicy.ENABLED)
                         .build(),
                     contentDescription = null,
-                    contentScale = ContentScale.Crop,
+                    contentScale = if (cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
                     placeholder = painterResource(R.drawable.queue_music),
                     error = painterResource(R.drawable.queue_music),
                     modifier = Modifier
@@ -1551,7 +1609,7 @@ fun SwipeToSongBox(
     val threshold = 300f
 
     val dragState = rememberDraggableState { delta ->
-        offset.value = (offset.value + delta).coerceIn(-threshold, threshold)
+        offset.floatValue = (offset.floatValue + delta).coerceIn(-threshold, threshold)
     }
 
     Box(
@@ -1562,13 +1620,13 @@ fun SwipeToSongBox(
                 state = dragState,
                 onDragStopped = {
                     when {
-                        offset.value >= threshold -> {
+                        offset.floatValue >= threshold -> {
                             player?.playNext(listOf(mediaItem))
                             Toast.makeText(ctx, R.string.play_next, Toast.LENGTH_SHORT).show()
                             reset(offset, scope)
                         }
 
-                        offset.value <= -threshold -> {
+                        offset.floatValue <= -threshold -> {
                             player?.addToQueue(listOf(mediaItem))
                             Toast.makeText(ctx, R.string.add_to_queue, Toast.LENGTH_SHORT).show()
                             reset(offset, scope)
@@ -1579,8 +1637,8 @@ fun SwipeToSongBox(
                 }
             )
     ) {
-        if (offset.value != 0f) {
-            val (iconRes, bg, tint, align) = if (offset.value > 0)
+        if (offset.floatValue != 0f) {
+            val (iconRes, bg, tint, align) = if (offset.floatValue > 0)
                 Quadruple(
                     R.drawable.playlist_play,
                     MaterialTheme.colorScheme.secondary,
@@ -1616,7 +1674,7 @@ fun SwipeToSongBox(
 
         Box(
             modifier = Modifier
-                .offset { IntOffset(offset.value.roundToInt(), 0) }
+                .offset { IntOffset(offset.floatValue.roundToInt(), 0) }
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface),
             content = content
@@ -1643,7 +1701,7 @@ data class Quadruple<A, B, C, D>(
     val fourth: D
 )
 
-private object Icon {
+object Icon {
     @Composable
     fun Favorite() {
         Icon(
