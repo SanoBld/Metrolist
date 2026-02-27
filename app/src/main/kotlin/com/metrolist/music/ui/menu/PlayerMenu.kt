@@ -13,13 +13,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -27,17 +27,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -68,8 +63,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -105,8 +98,6 @@ import kotlinx.coroutines.launch
 import kotlin.math.log2
 import kotlin.math.pow
 import kotlin.math.round
-import androidx.compose.material3.Card
-import androidx.compose.material3.LinearProgressIndicator
 
 @Composable
 fun PlayerMenu(
@@ -348,9 +339,13 @@ fun PlayerMenu(
         }
 
         item {
+            // Check if this is a podcast episode (album ID doesn't start with MPREb_)
+            val isPodcast = mediaMetadata.album?.let { !it.id.startsWith("MPREb_") } ?: false
+
             Material3MenuGroup(
                 items = buildList {
-                    if (artists.isNotEmpty()) {
+                    // Don't show "View Artist" for podcasts - only show "View Podcast"
+                    if (artists.isNotEmpty() && !isPodcast) {
                         add(
                             Material3MenuItemData(
                                 title = { Text(text = stringResource(R.string.view_artist)) },
@@ -383,7 +378,7 @@ fun PlayerMenu(
                     if (mediaMetadata.album != null) {
                         add(
                             Material3MenuItemData(
-                                title = { Text(text = stringResource(R.string.view_album)) },
+                                title = { Text(text = stringResource(if (isPodcast) R.string.view_podcast else R.string.view_album)) },
                                 description = {
                                     Text(
                                         text = mediaMetadata.album.title,
@@ -393,13 +388,17 @@ fun PlayerMenu(
                                 },
                                 icon = {
                                     Icon(
-                                        painter = painterResource(R.drawable.album),
+                                        painter = painterResource(if (isPodcast) R.drawable.mic else R.drawable.album),
                                         contentDescription = null,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 },
                                 onClick = {
-                                    navController.navigate("album/${mediaMetadata.album.id}")
+                                    if (isPodcast) {
+                                        navController.navigate("online_podcast/${mediaMetadata.album.id}")
+                                    } else {
+                                        navController.navigate("album/${mediaMetadata.album.id}")
+                                    }
                                     playerBottomSheetState.collapseSoft()
                                     onDismiss()
                                 }

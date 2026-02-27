@@ -6,7 +6,6 @@
 package com.metrolist.music.listentogether
 
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
 @Serializable
@@ -22,7 +21,7 @@ object ListenTogetherServers {
         [
           {
             "name": "The Meowery",
-            "url": "wss://metroserver.meowery.eu/ws",
+            "url": "wss://metroserverx.meowery.eu/ws",
             "location": "Poland",
             "operator": "Nyx"
           }

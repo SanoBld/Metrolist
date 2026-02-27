@@ -43,15 +43,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -64,7 +62,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -137,7 +134,6 @@ fun ThemeScreen(
     val (_, onDynamicThemeChange) = rememberPreference(DynamicThemeKey, defaultValue = true)
 
     val selectedThemeColor = Color(selectedThemeColorInt)
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -150,45 +146,39 @@ fun ThemeScreen(
         onDynamicThemeChange(isDynamicColor)
     }
 
-    Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.theme_colors)) },
-                navigationIcon = {
-                    IconButton(onClick = { navController.navigateUp() }) {
-                        Icon(
-                            painter = painterResource(R.drawable.arrow_back),
-                            contentDescription = stringResource(R.string.cd_back)
-                        )
-                    }
-                },
-                scrollBehavior = scrollBehavior
-            )
-        }
-    ) { innerPadding ->
-        if (isLandscape) {
-            LandscapeThemeLayout(
-                innerPadding = innerPadding,
-                darkMode = darkMode,
-                onDarkModeChange = onDarkModeChange,
-                pureBlack = pureBlack,
-                onPureBlackChange = onPureBlackChange,
-                selectedThemeColor = selectedThemeColor,
-                onSelectedThemeColorChange = handleColorSelection
-            )
-        } else {
-            PortraitThemeLayout(
-                innerPadding = innerPadding,
-                darkMode = darkMode,
-                onDarkModeChange = onDarkModeChange,
-                pureBlack = pureBlack,
-                onPureBlackChange = onPureBlackChange,
-                selectedThemeColor = selectedThemeColor,
-                onSelectedThemeColorChange = handleColorSelection
-            )
-        }
+    if (isLandscape) {
+        LandscapeThemeLayout(
+            innerPadding = PaddingValues(0.dp),
+            darkMode = darkMode,
+            onDarkModeChange = onDarkModeChange,
+            pureBlack = pureBlack,
+            onPureBlackChange = onPureBlackChange,
+            selectedThemeColor = selectedThemeColor,
+            onSelectedThemeColorChange = handleColorSelection
+        )
+    } else {
+        PortraitThemeLayout(
+            innerPadding = PaddingValues(0.dp),
+            darkMode = darkMode,
+            onDarkModeChange = onDarkModeChange,
+            pureBlack = pureBlack,
+            onPureBlackChange = onPureBlackChange,
+            selectedThemeColor = selectedThemeColor,
+            onSelectedThemeColorChange = handleColorSelection
+        )
     }
+
+    TopAppBar(
+        title = { Text(stringResource(R.string.theme_colors)) },
+        navigationIcon = {
+            IconButton(onClick = { navController.navigateUp() }) {
+                Icon(
+                    painter = painterResource(R.drawable.arrow_back),
+                    contentDescription = stringResource(R.string.cd_back)
+                )
+            }
+        }
+    )
 }
 
 @Composable
@@ -330,15 +320,14 @@ fun ThemeControls(
                     horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // System mode (separated)
+                    // System mode (AUTO)
                     ModeCircle(
                         darkMode = darkMode,
                         pureBlack = pureBlack,
                         targetMode = DarkMode.AUTO,
-                        targetPureBlack = false,
+                        targetPureBlack = pureBlack,
                         onClick = {
                             onDarkModeChange(DarkMode.AUTO)
-                            onPureBlackChange(false)
                         },
                         showIcon = true
                     )

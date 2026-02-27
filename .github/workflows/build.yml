@@ -46,6 +46,7 @@ jobs:
       - name: Setup and Generate Protobuf
         uses: ./.github/actions/setup-protobuf
 
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -112,6 +113,7 @@ jobs:
 
       - name: Setup and Generate Protobuf
         uses: ./.github/actions/setup-protobuf
+
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew

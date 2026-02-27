@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -33,7 +32,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.ListItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -70,22 +68,22 @@ import coil3.compose.AsyncImage
 import com.metrolist.innertube.YouTube
 import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalDownloadUtil
-import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.LocalListenTogetherManager
+import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
 import com.metrolist.music.constants.ListItemHeight
 import com.metrolist.music.constants.ListThumbnailSize
 import com.metrolist.music.db.entities.Album
+import com.metrolist.music.db.entities.SpeedDialItem
 import com.metrolist.music.db.entities.Song
 import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.playback.ExoDownloadService
 import com.metrolist.music.playback.queues.ListQueue
-import com.metrolist.music.playback.queues.LocalAlbumRadio
 import com.metrolist.music.ui.component.AlbumListItem
 import com.metrolist.music.ui.component.ListDialog
 import com.metrolist.music.ui.component.ListItem
-import com.metrolist.music.ui.component.Material3MenuItemData
 import com.metrolist.music.ui.component.Material3MenuGroup
+import com.metrolist.music.ui.component.Material3MenuItemData
 import com.metrolist.music.ui.component.NewAction
 import com.metrolist.music.ui.component.NewActionGrid
 import com.metrolist.music.ui.component.SongListItem
@@ -150,6 +148,8 @@ fun AlbumMenu(
         animationSpec = tween(durationMillis = 800),
         label = "",
     )
+
+    val isPinned by database.speedDialDao.isPinned(album.id).collectAsState(initial = false)
 
     var showChoosePlaylistDialog by rememberSaveable {
         mutableStateOf(false)
@@ -423,6 +423,39 @@ fun AlbumMenu(
                         },
                         onClick = {
                             showChoosePlaylistDialog = true
+                        }
+                    ),
+                    Material3MenuItemData(
+                        title = { 
+                            Text(
+                                text = if (isPinned) "Unpin from Speed dial" else "Pin to Speed dial" 
+                            ) 
+                        },
+                        icon = {
+                            Icon(
+                                painter = painterResource(if (isPinned) R.drawable.remove else R.drawable.add),
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            coroutineScope.launch(Dispatchers.IO) {
+                                if (isPinned) {
+                                    database.speedDialDao.delete(album.id)
+                                } else {
+                                    database.speedDialDao.insert(
+                                        SpeedDialItem(
+                                            id = album.id,
+                                            secondaryId = album.album.playlistId,
+                                            title = album.album.title,
+                                            subtitle = album.artists.joinToString(", ") { it.name },
+                                            thumbnailUrl = album.album.thumbnailUrl,
+                                            type = "ALBUM",
+                                            explicit = album.album.explicit
+                                        )
+                                    )
+                                }
+                            }
+                            onDismiss()
                         }
                     )
                 )

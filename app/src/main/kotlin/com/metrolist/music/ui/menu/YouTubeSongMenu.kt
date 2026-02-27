@@ -7,34 +7,32 @@ package com.metrolist.music.ui.menu
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.widget.Toast
 import android.content.res.Configuration
-import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.ListItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -64,13 +62,14 @@ import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalDownloadUtil
+import com.metrolist.music.LocalListenTogetherManager
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.LocalSyncUtils
-import com.metrolist.music.LocalListenTogetherManager
 import com.metrolist.music.R
 import com.metrolist.music.constants.ListItemHeight
 import com.metrolist.music.constants.ListThumbnailSize
 import com.metrolist.music.constants.ThumbnailCornerRadius
+import com.metrolist.music.db.entities.SpeedDialItem
 import com.metrolist.music.db.entities.SongEntity
 import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.models.MediaMetadata
@@ -78,10 +77,9 @@ import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.playback.ExoDownloadService
 import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.ui.component.ListDialog
-import com.metrolist.music.ui.component.ListItem
 import com.metrolist.music.ui.component.LocalBottomSheetPageState
-import com.metrolist.music.ui.component.Material3MenuItemData
 import com.metrolist.music.ui.component.Material3MenuGroup
+import com.metrolist.music.ui.component.Material3MenuItemData
 import com.metrolist.music.ui.component.NewAction
 import com.metrolist.music.ui.component.NewActionGrid
 import com.metrolist.music.ui.utils.ShowMediaInfo
@@ -91,6 +89,8 @@ import com.metrolist.music.utils.makeTimeString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import timber.log.Timber
 import java.time.LocalDateTime
 
 @SuppressLint("MutableCollectionMutableState")
@@ -109,6 +109,7 @@ fun YouTubeSongMenu(
     val coroutineScope = rememberCoroutineScope()
     val syncUtils = LocalSyncUtils.current
     val listenTogetherManager = LocalListenTogetherManager.current
+    val isPinned by database.speedDialDao.isPinned(song.id).collectAsState(initial = false)
     val artists = remember {
         song.artists.mapNotNull {
             it.id?.let { artistId ->
@@ -217,30 +218,71 @@ fun YouTubeSongMenu(
                 )
             }
         },
-        trailingContent = {  
-            IconButton(  
-                onClick = {  
-                    database.transaction {  
-                        librarySong.let { librarySong ->  
-                            val s: SongEntity  
-                            if (librarySong == null) {  
-                                insert(song.toMediaMetadata(), SongEntity::toggleLike)  
-                                s = song.toMediaMetadata().toSongEntity().let(SongEntity::toggleLike)  
-                            } else {  
-                                s = librarySong.song.toggleLike()  
-                                update(s)  
-                            }  
-                            syncUtils.likeSong(s)  
-                        }  
-                    }  
-                },  
-            ) {  
-                Icon(  
-                    painter = painterResource(if (librarySong?.song?.liked == true) R.drawable.favorite else R.drawable.favorite_border),  
-                    tint = if (librarySong?.song?.liked == true) MaterialTheme.colorScheme.error else LocalContentColor.current,  
-                    contentDescription = null,  
-                )  
-            }  
+        trailingContent = {
+            // For episodes, show saved state and toggle save for later
+            val isEpisode = song.isEpisode
+            val isFavorite = if (isEpisode) librarySong?.song?.inLibrary != null else librarySong?.song?.liked == true
+            IconButton(
+                onClick = {
+                    if (isEpisode) {
+                        // Episode: toggle save for later
+                        val currentLibrarySong = librarySong
+                        val isCurrentlySaved = currentLibrarySong?.song?.inLibrary != null
+                        database.query {
+                            if (currentLibrarySong != null) {
+                                update(currentLibrarySong.song.copy(inLibrary = if (isCurrentlySaved) null else LocalDateTime.now()))
+                            } else {
+                                insert(song.toMediaMetadata().toSongEntity().copy(inLibrary = LocalDateTime.now(), isEpisode = true))
+                            }
+                        }
+                        coroutineScope.launch(Dispatchers.IO) {
+                            if (isCurrentlySaved) {
+                                val setVideoId = song.setVideoId ?: database.getSetVideoId(song.id)?.setVideoId
+                                if (setVideoId != null) {
+                                    YouTube.removeEpisodeFromSavedEpisodes(song.id, setVideoId).onSuccess {
+                                        Timber.d("[EPISODE_SAVE] Removed episode from Episodes for Later: ${song.id}")
+                                    }.onFailure { e ->
+                                        Timber.e(e, "[EPISODE_SAVE] Failed to remove episode: ${song.id}")
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, R.string.error_episode_remove, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            } else {
+                                YouTube.addEpisodeToSavedEpisodes(song.id).onSuccess {
+                                    Timber.d("[EPISODE_SAVE] Saved episode to Episodes for Later: ${song.id}")
+                                }.onFailure { e ->
+                                    Timber.e(e, "[EPISODE_SAVE] Failed to save episode: ${song.id}")
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, R.string.error_episode_save, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Regular song: toggle like
+                        database.transaction {
+                            librarySong.let { librarySong ->
+                                val s: SongEntity
+                                if (librarySong == null) {
+                                    insert(song.toMediaMetadata(), SongEntity::toggleLike)
+                                    s = song.toMediaMetadata().toSongEntity().let(SongEntity::toggleLike)
+                                } else {
+                                    s = librarySong.song.toggleLike()
+                                    update(s)
+                                }
+                                syncUtils.likeSong(s)
+                            }
+                        }
+                    }
+                },
+            ) {
+                Icon(
+                    painter = painterResource(if (isFavorite) R.drawable.favorite else R.drawable.favorite_border),
+                    tint = if (isFavorite) MaterialTheme.colorScheme.error else LocalContentColor.current,
+                    contentDescription = null,
+                )
+            }
         },  
     )  
 
@@ -390,6 +432,81 @@ fun YouTubeSongMenu(
         item {
             Material3MenuGroup(
                 items = buildList {
+                    // Save/Remove for Later option for podcast episodes
+                    if (song.isEpisode) {
+                        if (song.setVideoId != null) {
+                            // Episode is saved - show remove option
+                            add(
+                                Material3MenuItemData(
+                                    title = { Text(text = stringResource(R.string.remove_episode_from_saved)) },
+                                    icon = {
+                                        Icon(
+                                            painter = painterResource(R.drawable.remove),
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    onClick = {
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            Timber.d("[EPISODE_SAVE] Removing episode ${song.id} from Episodes for Later")
+                                            // Optimistic UI update - remove from library immediately
+                                            database.query {
+                                                librarySong?.song?.let { update(it.copy(inLibrary = null)) }
+                                            }
+                                            YouTube.removeEpisodeFromSavedEpisodes(song.id, song.setVideoId!!)
+                                                .onSuccess {
+                                                    Timber.d("[EPISODE_SAVE] Successfully removed from Episodes for Later")
+                                                }
+                                                .onFailure { e ->
+                                                    Timber.e(e, "[EPISODE_SAVE] Failed to remove from Episodes for Later")
+                                                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                                        android.widget.Toast.makeText(context, R.string.error_episode_remove, android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                        }
+                                        onDismiss()
+                                    }
+                                )
+                            )
+                        } else {
+                            // Episode not saved - show save option
+                            add(
+                                Material3MenuItemData(
+                                    title = { Text(text = stringResource(R.string.save_episode_for_later)) },
+                                    description = { Text(text = stringResource(R.string.save_episode_for_later_desc)) },
+                                    icon = {
+                                        Icon(
+                                            painter = painterResource(R.drawable.playlist_add),
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    onClick = {
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            Timber.d("[EPISODE_SAVE] Saving episode ${song.id} to Episodes for Later")
+                                            // Optimistic UI update - add to library immediately
+                                            database.query {
+                                                if (librarySong != null) {
+                                                    update(librarySong!!.song.copy(inLibrary = java.time.LocalDateTime.now()))
+                                                } else {
+                                                    insert(song.toMediaMetadata().toSongEntity().copy(inLibrary = java.time.LocalDateTime.now(), isEpisode = true))
+                                                }
+                                            }
+                                            YouTube.addEpisodeToSavedEpisodes(song.id)
+                                                .onSuccess {
+                                                    Timber.d("[EPISODE_SAVE] Successfully saved to Episodes for Later")
+                                                }
+                                                .onFailure { e ->
+                                                    Timber.e(e, "[EPISODE_SAVE] Failed to save to Episodes for Later")
+                                                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                                        android.widget.Toast.makeText(context, R.string.error_episode_save, android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                        }
+                                        onDismiss()
+                                    }
+                                )
+                            )
+                        }
+                    }
                     if (song.historyRemoveToken != null) {
                         add(
                             Material3MenuItemData(
@@ -402,7 +519,14 @@ fun YouTubeSongMenu(
                                 },
                                 onClick = {
                                     coroutineScope.launch {
+                                        Timber.d("[HISTORY_REMOVE] Removing song ${song.id} from YTM history")
                                         YouTube.feedback(listOf(song.historyRemoveToken!!))
+                                            .onSuccess {
+                                                Timber.d("[HISTORY_REMOVE] Successfully removed from YTM history")
+                                            }
+                                            .onFailure { e ->
+                                                Timber.e(e, "[HISTORY_REMOVE] Failed to remove from YTM history")
+                                            }
                                         delay(500)
                                         onHistoryRemoved()
                                         onDismiss()
@@ -411,6 +535,31 @@ fun YouTubeSongMenu(
                             )
                         )
                     }
+                    add(
+                        Material3MenuItemData(
+                            title = { 
+                                Text(
+                                    text = if (isPinned) stringResource(R.string.unpin_from_speed_dial) else stringResource(R.string.pin_to_speed_dial)
+                                ) 
+                            },
+                            icon = {
+                                Icon(
+                                    painter = painterResource(if (isPinned) R.drawable.remove else R.drawable.add),
+                                    contentDescription = null,
+                                )
+                            },
+                            onClick = {
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    if (isPinned) {
+                                        database.speedDialDao.delete(song.id)
+                                    } else {
+                                        database.speedDialDao.insert(SpeedDialItem.fromYTItem(song))
+                                    }
+                                }
+                                onDismiss()
+                            }
+                        )
+                    )
                     add(
                         Material3MenuItemData(
                             title = {
@@ -537,9 +686,13 @@ fun YouTubeSongMenu(
         item { Spacer(modifier = Modifier.height(12.dp)) }
 
         item {
+            // Check if this is a podcast episode (album ID doesn't start with MPREb_)
+            val isPodcast = song.album?.let { !it.id.startsWith("MPREb_") } ?: false
+
             Material3MenuGroup(
                 items = buildList {
-                    if (artists.isNotEmpty()) {
+                    // Don't show "View Artist" for podcasts - only show "View Podcast"
+                    if (artists.isNotEmpty() && !isPodcast) {
                         add(
                             Material3MenuItemData(
                                 title = { Text(text = stringResource(R.string.view_artist)) },
@@ -564,16 +717,20 @@ fun YouTubeSongMenu(
                     song.album?.let { album ->
                         add(
                             Material3MenuItemData(
-                                title = { Text(text = stringResource(R.string.view_album)) },
+                                title = { Text(text = stringResource(if (isPodcast) R.string.view_podcast else R.string.view_album)) },
                                 description = { Text(text = album.name) },
                                 icon = {
                                     Icon(
-                                        painter = painterResource(R.drawable.album),
+                                        painter = painterResource(if (isPodcast) R.drawable.mic else R.drawable.album),
                                         contentDescription = null,
                                     )
                                 },
                                 onClick = {
-                                    navController.navigate("album/${album.id}")
+                                    if (isPodcast) {
+                                        navController.navigate("online_podcast/${album.id}")
+                                    } else {
+                                        navController.navigate("album/${album.id}")
+                                    }
                                     onDismiss()
                                 }
                             )

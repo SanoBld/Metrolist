@@ -13,8 +13,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.media3.exoplayer.offline.Download
 import com.metrolist.innertube.YouTube
+import com.metrolist.innertube.models.SongItem
 import com.metrolist.music.constants.AlbumFilter
 import com.metrolist.music.constants.AlbumFilterKey
 import com.metrolist.music.constants.AlbumSortDescendingKey
@@ -30,6 +30,7 @@ import com.metrolist.music.constants.ArtistSortType
 import com.metrolist.music.constants.ArtistSortTypeKey
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
+import com.metrolist.music.constants.HideYoutubeShortsKey
 import com.metrolist.music.constants.LibraryFilter
 import com.metrolist.music.constants.PlaylistSortDescendingKey
 import com.metrolist.music.constants.PlaylistSortType
@@ -44,12 +45,11 @@ import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.extensions.filterExplicit
 import com.metrolist.music.extensions.filterExplicitAlbums
 import com.metrolist.music.extensions.filterVideoSongs
-import com.metrolist.music.extensions.reversed
+import com.metrolist.music.extensions.filterYoutubeShorts
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.playback.DownloadUtil
 import com.metrolist.music.utils.SyncUtils
 import com.metrolist.music.utils.dataStore
-import com.metrolist.music.utils.get
 import com.metrolist.music.utils.reportException
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -57,17 +57,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.text.Collator
 import java.time.Duration
 import java.time.LocalDateTime
-import java.util.Locale
 import javax.inject.Inject
 
 @HiltViewModel
@@ -98,9 +96,7 @@ constructor(
                     SongFilter.LIBRARY -> database.songs(sortType, descending).map { it.filterExplicit(hideExplicit).filterVideoSongs(hideVideoSongs) }
                     SongFilter.LIKED -> database.likedSongs(sortType, descending).map { it.filterExplicit(hideExplicit).filterVideoSongs(hideVideoSongs) }
                     SongFilter.DOWNLOADED -> database.downloadedSongs(sortType, descending).map { it.filterExplicit(hideExplicit).filterVideoSongs(hideVideoSongs) }
-                    // Uploaded feature is temporarily disabled
-                    SongFilter.UPLOADED -> kotlinx.coroutines.flow.flowOf(emptyList())
-                    // SongFilter.UPLOADED -> database.uploadedSongs(sortType, descending).map { it.filterExplicit(hideExplicit).filterVideoSongs(hideVideoSongs) }
+                    SongFilter.UPLOADED -> database.uploadedSongs(sortType, descending).map { it.filterExplicit(hideExplicit).filterVideoSongs(hideVideoSongs) }
                 }
             }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
@@ -112,9 +108,8 @@ constructor(
         viewModelScope.launch(Dispatchers.IO) { syncUtils.syncLibrarySongs() }
     }
 
-    // Uploaded feature is temporarily disabled
     fun syncUploadedSongs() {
-        // viewModelScope.launch(Dispatchers.IO) { syncUtils.syncUploadedSongs() }
+        viewModelScope.launch(Dispatchers.IO) { syncUtils.syncUploadedSongs() }
     }
 }
 
@@ -193,9 +188,7 @@ constructor(
                 when (filter) {
                     AlbumFilter.LIKED -> database.albumsLiked(sortType, descending).map { it.filterExplicitAlbums(hideExplicit) }
                     AlbumFilter.LIBRARY -> database.albums(sortType, descending).map { it.filterExplicitAlbums(hideExplicit) }
-                    // Uploaded feature is temporarily disabled
-                    AlbumFilter.UPLOADED -> kotlinx.coroutines.flow.flowOf(emptyList())
-                    // AlbumFilter.UPLOADED -> database.albumsUploaded(sortType, descending).map { it.filterExplicitAlbums(hideExplicit) }
+                    AlbumFilter.UPLOADED -> database.albumsUploaded(sortType, descending).map { it.filterExplicitAlbums(hideExplicit) }
                 }
             }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
@@ -241,11 +234,14 @@ constructor(
     val allPlaylists =
         context.dataStore.data
             .map {
-                it[PlaylistSortTypeKey].toEnum(PlaylistSortType.CREATE_DATE) to (it[PlaylistSortDescendingKey]
-                    ?: true)
+                Triple(
+                    it[PlaylistSortTypeKey].toEnum(PlaylistSortType.CREATE_DATE),
+                    it[PlaylistSortDescendingKey] ?: true,
+                    it[HideYoutubeShortsKey] ?: false
+                )
             }.distinctUntilChanged()
-            .flatMapLatest { (sortType, descending) ->
-                database.playlists(sortType, descending)
+            .flatMapLatest { (sortType, descending, hideYoutubeShorts) ->
+                database.playlists(sortType, descending).map { it.filterYoutubeShorts(hideYoutubeShorts) }
             }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     fun sync() {
@@ -329,8 +325,12 @@ constructor(
         .flatMapLatest { hideExplicit ->
             database.albumsLiked(AlbumSortType.CREATE_DATE, true).map { it.filterExplicitAlbums(hideExplicit) }
         }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-    var playlists = database.playlists(PlaylistSortType.CREATE_DATE, true)
-        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    var playlists = context.dataStore.data
+        .map { it[HideYoutubeShortsKey] ?: false }
+        .distinctUntilChanged()
+        .flatMapLatest { hideYoutubeShorts ->
+            database.playlists(PlaylistSortType.CREATE_DATE, true).map { it.filterYoutubeShorts(hideYoutubeShorts) }
+        }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -375,6 +375,90 @@ constructor(
                     }
             }
         }
+    }
+}
+
+@HiltViewModel
+class LibraryPodcastsViewModel
+@Inject
+constructor(
+    @ApplicationContext context: Context,
+    database: MusicDatabase,
+    private val syncUtils: SyncUtils,
+) : ViewModel() {
+    // Saved podcast channels (Your Shows)
+    val subscribedChannels = database.subscribedPodcasts()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    // New Episodes from official API (VLRDPN)
+    private val _newEpisodes = MutableStateFlow<List<SongItem>>(emptyList())
+    val newEpisodes: StateFlow<List<SongItem>> = _newEpisodes.asStateFlow()
+
+    private val _isLoadingNewEpisodes = MutableStateFlow(false)
+    val isLoadingNewEpisodes: StateFlow<Boolean> = _isLoadingNewEpisodes.asStateFlow()
+
+    // Episodes for Later - only show episodes that are saved (inLibrary != null)
+    val allPodcasts =
+        context.dataStore.data
+            .map {
+                Pair(
+                    it[SongSortTypeKey].toEnum(SongSortType.CREATE_DATE) to (it[SongSortDescendingKey] ?: true),
+                    it[HideExplicitKey] ?: false
+                )
+            }.distinctUntilChanged()
+            .flatMapLatest { (sortDesc, hideExplicit) ->
+                val (sortType, descending) = sortDesc
+                database.podcastEpisodes(sortType, descending).map { episodes ->
+                    episodes.filter { it.song.inLibrary != null }.filterExplicit(hideExplicit)
+                }
+            }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    init {
+        // Sync episodes for later when the screen is opened
+        viewModelScope.launch(Dispatchers.IO) {
+            syncUtils.syncEpisodesForLaterSuspend()
+        }
+        // Fetch new episodes from official API
+        viewModelScope.launch(Dispatchers.IO) {
+            fetchNewEpisodes()
+        }
+    }
+
+    fun fetchNewEpisodes() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isLoadingNewEpisodes.value = true
+            YouTube.newEpisodes().onSuccess { episodes ->
+                _newEpisodes.value = episodes
+            }.onFailure {
+                timber.log.Timber.e(it, "Failed to fetch new episodes")
+            }
+            _isLoadingNewEpisodes.value = false
+        }
+    }
+
+    fun syncPodcastSubscriptions() {
+        viewModelScope.launch(Dispatchers.IO) {
+            syncUtils.syncPodcastSubscriptions()
+        }
+    }
+
+    fun syncEpisodesForLater() {
+        viewModelScope.launch(Dispatchers.IO) {
+            syncUtils.syncEpisodesForLater()
+        }
+    }
+
+    fun clearPodcastData() {
+        viewModelScope.launch(Dispatchers.IO) {
+            syncUtils.clearPodcastData()
+        }
+    }
+
+    suspend fun refreshAll() {
+        // Sync subscriptions first, then episodes, then fetch new episodes
+        syncUtils.syncPodcastSubscriptionsSuspend()
+        syncUtils.syncEpisodesForLaterSuspend()
+        fetchNewEpisodes()
     }
 }
 

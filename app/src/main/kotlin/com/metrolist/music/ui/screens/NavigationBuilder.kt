@@ -25,7 +25,6 @@ import androidx.navigation.compose.dialog
 import androidx.navigation.navArgument
 import com.metrolist.music.constants.DarkModeKey
 import com.metrolist.music.constants.PureBlackKey
-import com.metrolist.music.eq.data.EQProfileRepository
 import com.metrolist.music.ui.screens.artist.ArtistAlbumsScreen
 import com.metrolist.music.ui.screens.artist.ArtistItemsScreen
 import com.metrolist.music.ui.screens.artist.ArtistScreen
@@ -37,10 +36,10 @@ import com.metrolist.music.ui.screens.playlist.CachePlaylistScreen
 import com.metrolist.music.ui.screens.playlist.LocalPlaylistScreen
 import com.metrolist.music.ui.screens.playlist.OnlinePlaylistScreen
 import com.metrolist.music.ui.screens.playlist.TopPlaylistScreen
+import com.metrolist.music.ui.screens.podcast.OnlinePodcastScreen
 import com.metrolist.music.ui.screens.search.OnlineSearchResult
 import com.metrolist.music.ui.screens.search.SearchScreen
 import com.metrolist.music.ui.screens.settings.AboutScreen
-import com.metrolist.music.ui.screens.settings.AccountSettings
 import com.metrolist.music.ui.screens.settings.AppearanceSettings
 import com.metrolist.music.ui.screens.settings.BackupAndRestore
 import com.metrolist.music.ui.screens.settings.ContentSettings
@@ -53,10 +52,13 @@ import com.metrolist.music.ui.screens.settings.SettingsScreen
 import com.metrolist.music.ui.screens.settings.StorageSettings
 import com.metrolist.music.ui.screens.settings.ThemeScreen
 import com.metrolist.music.ui.screens.settings.UpdaterScreen
+import com.metrolist.music.ui.screens.settings.AiSettings
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
 import com.metrolist.music.ui.screens.settings.integrations.IntegrationScreen
 import com.metrolist.music.ui.screens.settings.integrations.LastFMSettings
 import com.metrolist.music.ui.screens.settings.integrations.ListenTogetherSettings
+import com.metrolist.music.ui.screens.recognition.RecognitionScreen
+import com.metrolist.music.ui.screens.recognition.RecognitionHistoryScreen
 import com.metrolist.music.ui.screens.wrapped.WrappedScreen
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
@@ -91,6 +93,16 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable(Screens.Library.route) {
         LibraryScreen(navController)
+    }
+
+    composable(Screens.ListenTogether.route) {
+        ListenTogetherScreen(navController, showTopBar = false)
+    }
+
+    composable(
+        route = "listen_together_from_topbar",
+    ) {
+        ListenTogetherScreen(navController, showTopBar = true)
     }
 
     composable("history") {
@@ -238,6 +250,17 @@ fun NavGraphBuilder.navigationBuilder(
     }
 
     composable(
+        route = "online_podcast/{podcastId}",
+        arguments = listOf(
+            navArgument("podcastId") {
+                type = NavType.StringType
+            },
+        ),
+    ) {
+        OnlinePodcastScreen(navController, scrollBehavior)
+    }
+
+    composable(
         route = "local_playlist/{playlistId}",
         arguments = listOf(
             navArgument("playlistId") {
@@ -317,6 +340,10 @@ fun NavGraphBuilder.navigationBuilder(
         RomanizationSettings(navController, scrollBehavior)
     }
 
+    composable("settings/ai") {
+        AiSettings(navController, scrollBehavior)
+    }
+    
     composable("settings/player") {
         PlayerSettings(navController, scrollBehavior)
     }
@@ -338,7 +365,7 @@ fun NavGraphBuilder.navigationBuilder(
     }
 
     composable("settings/integrations/discord") {
-        DiscordSettings(navController, scrollBehavior)
+        DiscordSettings(navController, scrollBehavior, snackbarHostState)
     }
 
     composable("settings/integrations/lastfm") {
@@ -371,5 +398,13 @@ fun NavGraphBuilder.navigationBuilder(
 
     dialog("equalizer") {
         EqScreen()
+    }
+
+    composable("recognition") {
+        RecognitionScreen(navController)
+    }
+
+    composable("recognition_history") {
+        RecognitionHistoryScreen(navController)
     }
 }
