@@ -15,7 +15,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,7 +47,6 @@ import com.metrolist.music.viewmodels.NewReleaseViewModel
 @Composable
 fun NewReleaseScreen(
     navController: NavController,
-    scrollBehavior: TopAppBarScrollBehavior,
     viewModel: NewReleaseViewModel = hiltViewModel(),
 ) {
     val menuState = LocalMenuState.current
@@ -68,7 +66,7 @@ fun NewReleaseScreen(
     ) {
         items(
             items = newReleaseAlbums.distinctBy { it.id },
-            key = { it.id },
+            key = { "newrelease_${it.id}" },
         ) { album ->
             YouTubeGridItem(
                 item = album,
@@ -77,22 +75,22 @@ fun NewReleaseScreen(
                 fillMaxWidth = true,
                 coroutineScope = coroutineScope,
                 modifier =
-                Modifier
-                    .combinedClickable(
-                        onClick = {
-                            navController.navigate("album/${album.id}")
-                        },
-                        onLongClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            menuState.show {
-                                YouTubeAlbumMenu(
-                                    albumItem = album,
-                                    navController = navController,
-                                    onDismiss = menuState::dismiss,
-                                )
-                            }
-                        },
-                    ),
+                    Modifier
+                        .combinedClickable(
+                            onClick = {
+                                navController.navigate("album/${album.id}")
+                            },
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                menuState.show {
+                                    YouTubeAlbumMenu(
+                                        albumItem = album,
+                                        navController = navController,
+                                        onDismiss = menuState::dismiss,
+                                    )
+                                }
+                            },
+                        ),
             )
         }
 

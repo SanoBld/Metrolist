@@ -103,12 +103,12 @@ interface DatabaseDao {
                 songs
                     .sortedWith(
                         compareBy(collator) { song ->
-                            song.artists.joinToString("") { it.name }
+                            song.orderedArtists.joinToString("") { it.name }
                         },
                     ).groupBy { it.album?.title }
                     .flatMap { (_, songsByAlbum) ->
                         songsByAlbum.sortedBy { album ->
-                            album.artists.joinToString(
+                            album.orderedArtists.joinToString(
                                 "",
                             ) { it.name }
                         }
@@ -153,12 +153,12 @@ interface DatabaseDao {
                 songs
                     .sortedWith(
                         compareBy(collator) { song ->
-                            song.artists.joinToString("") { it.name }
+                            song.orderedArtists.joinToString("") { it.name }
                         },
                     ).groupBy { it.album?.title }
                     .flatMap { (_, songsByAlbum) ->
                         songsByAlbum.sortedBy { album ->
-                            album.artists.joinToString(
+                            album.orderedArtists.joinToString(
                                 "",
                             ) { it.name }
                         }
@@ -352,6 +352,66 @@ interface DatabaseDao {
         toTimeStamp: Long? = LocalDateTime.now().toInstant(ZoneOffset.UTC).toEpochMilli(),
     ): Flow<List<SongWithStats>>
 
+    // Time Transfer
+    @Query("UPDATE event SET songId = :toSongId WHERE songId = :fromSongId")
+    suspend fun transferEvents(fromSongId: String, toSongId: String): Int
+
+    // 1) Load source rows
+    @Query("SELECT * FROM playCount WHERE song = :fromSongId")
+    suspend fun getPlayCountsForSong(fromSongId: String): List<PlayCountEntity>
+
+    // 2) Try to add into existing target row
+    @Query(
+        """
+    UPDATE playCount
+    SET count = count + :delta
+    WHERE song = :toSongId AND year = :year AND month = :month
+    """,
+    )
+    suspend fun addToPlayCountRow(toSongId: String, year: Int, month: Int, delta: Int): Int
+
+    // 3) Insert new target row if none existed
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.IGNORE)
+    suspend fun insertPlayCountRow(row: PlayCountEntity): Long
+
+
+    @Query("DELETE FROM playCount WHERE song = :fromSongId")
+    suspend fun deletePlayCountsForSong(fromSongId: String): Int
+
+    @Transaction
+    suspend fun transferSongStats(fromSongId: String, toSongId: String) {
+        require(fromSongId != toSongId) { "fromSongId and toSongId must differ" }
+
+        val movedPlayTime = getTotalPlayTimeForSong(fromSongId) ?: 0L
+
+        // 1) move events (source loses them)
+        transferEvents(fromSongId, toSongId)
+
+        // 2) merge playCount rows into target and remove source rows
+        val rows = getPlayCountsForSong(fromSongId)
+        for (r in rows) {
+            val updated = addToPlayCountRow(toSongId, r.year, r.month, r.count)
+            if (updated == 0) {
+                // no target row existed -> create it
+                insertPlayCountRow(
+                    PlayCountEntity(
+                        song = toSongId,
+                        year = r.year,
+                        month = r.month,
+                        count = r.count,
+                    ),
+                )
+            }
+        }
+        deletePlayCountsForSong(fromSongId)
+
+        if (movedPlayTime != 0L) {
+            incrementTotalPlayTime(toSongId, movedPlayTime)
+            incrementTotalPlayTime(fromSongId, -movedPlayTime)
+        }
+    }
+    // Time Transfer
+
     @Transaction
     @RewriteQueriesToDropUnusedColumns
     @Query(
@@ -466,6 +526,9 @@ interface DatabaseDao {
 
     @Query("SELECT SUM(playTime) FROM event WHERE timestamp >= :fromTimeStamp AND timestamp <= :toTimeStamp")
     fun getTotalPlayTimeInRange(fromTimeStamp: Long, toTimeStamp: Long): Flow<Long?>
+
+    @Query("SELECT SUM(playTime) FROM event WHERE songId = :songId")
+    fun getTotalPlayTimeForSong(songId: String): Long?
 
     @Query("SELECT COUNT(DISTINCT songId) FROM event WHERE timestamp >= :fromTimeStamp AND timestamp <= :toTimeStamp")
     fun getUniqueSongCountInRange(fromTimeStamp: Long, toTimeStamp: Long): Flow<Int>
@@ -1001,6 +1064,11 @@ interface DatabaseDao {
         songIds: List<String>,
     ): List<String>
 
+    @Query("UPDATE playlist SET lastUpdateTime = :now WHERE id = :playlistId")
+    fun updatePlaylistLastUpdated(
+        playlistId: String,
+        now: LocalDateTime = LocalDateTime.now(),
+    )
     @Transaction
     fun addSongToPlaylist(playlist: Playlist, songIds: List<String>) {
         var position = playlist.songCount
@@ -1013,6 +1081,7 @@ interface DatabaseDao {
                 )
             )
         }
+        updatePlaylistLastUpdated(playlist.id)
     }
 
     fun downloadedSongs(
@@ -1030,7 +1099,7 @@ interface DatabaseDao {
             val collator = Collator.getInstance(Locale.getDefault())
             collator.strength = Collator.PRIMARY
             songs.sortedWith(compareBy(collator) { song ->
-                song.artists.joinToString("") { it.name }
+                song.orderedArtists.joinToString("") { it.name }
             })
         }
 
@@ -1038,19 +1107,34 @@ interface DatabaseDao {
     }.map { it.reversed(descending) }
 
     @Transaction
-    @Query("SELECT * FROM song WHERE isDownloaded = 1 ORDER BY dateDownload")
+    @Query("SELECT * FROM song WHERE (isDownloaded = 1 OR isCached = 1) AND (isEpisode = 0 OR isEpisode IS NULL) ORDER BY dateDownload")
     fun downloadedSongsByCreateDateAsc(): Flow<List<Song>>
 
     @Transaction
-    @Query("SELECT * FROM song WHERE isDownloaded = 1 ORDER BY title")
+    @Query("SELECT * FROM song WHERE (isDownloaded = 1 OR isCached = 1) AND (isEpisode = 0 OR isEpisode IS NULL) ORDER BY title")
     fun downloadedSongsByNameAsc(): Flow<List<Song>>
 
     @Transaction
-    @Query("SELECT * FROM song WHERE isDownloaded = 1 ORDER BY totalPlayTime")
+    @Query("SELECT * FROM song WHERE (isDownloaded = 1 OR isCached = 1) AND (isEpisode = 0 OR isEpisode IS NULL) ORDER BY totalPlayTime")
     fun downloadedSongsByPlayTimeAsc(): Flow<List<Song>>
 
     @Query("UPDATE song SET isDownloaded = :downloaded, dateDownload = :date WHERE id = :songId")
     fun updateDownloadedInfo(songId: String, downloaded: Boolean, date: LocalDateTime?)
+
+    @Query("UPDATE song SET isCached = :cached WHERE id = :songId")
+    fun updateCachedInfo(songId: String, cached: Boolean)
+
+    @Query("UPDATE song SET isCached = 1 WHERE id IN (:songIds)")
+    fun updateCachedInfoMany(songIds: List<String>)
+
+    @Query("UPDATE song SET playbackPosition = :position WHERE id = :songId")
+    fun updatePlaybackPosition(songId: String, position: Long?)
+
+    @Query("SELECT playbackPosition FROM song WHERE id = :songId")
+    fun getPlaybackPosition(songId: String): Long?
+
+    @Query("SELECT playbackPosition FROM song WHERE id = :songId")
+    fun playbackPositionFlow(songId: String): Flow<Long?>
 
     @Transaction
     @Query("SELECT * FROM song WHERE isUploaded = 1 ORDER BY dateDownload")
@@ -1087,12 +1171,12 @@ interface DatabaseDao {
                 songs
                     .sortedWith(
                         compareBy(collator) { song ->
-                            song.artists.joinToString("") { it.name }
+                            song.orderedArtists.joinToString("") { it.name }
                         },
                     ).groupBy { it.album?.title }
                     .flatMap { (_, songsByAlbum) ->
                         songsByAlbum.sortedBy { album ->
-                            album.artists.joinToString(
+                            album.orderedArtists.joinToString(
                                 "",
                             ) { it.name }
                         }
@@ -1137,12 +1221,12 @@ interface DatabaseDao {
                 songs
                     .sortedWith(
                         compareBy(collator) { song ->
-                            song.artists.joinToString("") { it.name }
+                            song.orderedArtists.joinToString("") { it.name }
                         },
                     ).groupBy { it.album?.title }
                     .flatMap { (_, songsByAlbum) ->
                         songsByAlbum.sortedBy { album ->
-                            album.artists.joinToString(
+                            album.orderedArtists.joinToString(
                                 "",
                             ) { it.name }
                         }
@@ -1150,6 +1234,75 @@ interface DatabaseDao {
             }
 
         SongSortType.PLAY_TIME -> podcastEpisodesByPlayTimeAsc()
+    }.map { it.reversed(descending) }
+
+    @Transaction
+    @Query("SELECT * FROM song WHERE isEpisode = 1 AND (isDownloaded = 1 OR isCached = 1) ORDER BY dateDownload")
+    fun downloadedPodcastEpisodesByCreateDateAsc(): Flow<List<Song>>
+
+    @Transaction
+    @Query("SELECT * FROM song WHERE isEpisode = 1 AND (isDownloaded = 1 OR isCached = 1) ORDER BY title")
+    fun downloadedPodcastEpisodesByNameAsc(): Flow<List<Song>>
+
+    @Transaction
+    @Query("SELECT * FROM song WHERE isEpisode = 1 AND (isDownloaded = 1 OR isCached = 1) ORDER BY totalPlayTime")
+    fun downloadedPodcastEpisodesByPlayTimeAsc(): Flow<List<Song>>
+
+    // Saved episodes (in library but not necessarily downloaded)
+    @Transaction
+    @Query("SELECT * FROM song WHERE isEpisode = 1 AND inLibrary IS NOT NULL ORDER BY inLibrary DESC")
+    fun savedPodcastEpisodesByCreateDateAsc(): Flow<List<Song>>
+
+    @Transaction
+    @Query("SELECT * FROM song WHERE isEpisode = 1 AND inLibrary IS NOT NULL ORDER BY title")
+    fun savedPodcastEpisodesByNameAsc(): Flow<List<Song>>
+
+    @Transaction
+    @Query("SELECT * FROM song WHERE isEpisode = 1 AND inLibrary IS NOT NULL ORDER BY totalPlayTime")
+    fun savedPodcastEpisodesByPlayTimeAsc(): Flow<List<Song>>
+
+    fun savedPodcastEpisodes(
+        sortType: SongSortType,
+        descending: Boolean,
+    ) = when (sortType) {
+        SongSortType.CREATE_DATE -> savedPodcastEpisodesByCreateDateAsc()
+        SongSortType.NAME ->
+            savedPodcastEpisodesByNameAsc().map { songs ->
+                val collator = Collator.getInstance(Locale.getDefault())
+                collator.strength = Collator.PRIMARY
+                songs.sortedWith(compareBy(collator) { it.song.title })
+            }
+        SongSortType.ARTIST ->
+            savedPodcastEpisodesByNameAsc().map { songs ->
+                val collator = Collator.getInstance(Locale.getDefault())
+                collator.strength = Collator.PRIMARY
+                songs.sortedWith(compareBy(collator) { song ->
+                    song.orderedArtists.joinToString("") { it.name }
+                })
+            }
+        SongSortType.PLAY_TIME -> savedPodcastEpisodesByPlayTimeAsc()
+    }.map { it.reversed(descending) }
+
+    fun downloadedPodcastEpisodes(
+        sortType: SongSortType,
+        descending: Boolean,
+    ) = when (sortType) {
+        SongSortType.CREATE_DATE -> downloadedPodcastEpisodesByCreateDateAsc()
+        SongSortType.NAME ->
+            downloadedPodcastEpisodesByNameAsc().map { songs ->
+                val collator = Collator.getInstance(Locale.getDefault())
+                collator.strength = Collator.PRIMARY
+                songs.sortedWith(compareBy(collator) { it.song.title })
+            }
+        SongSortType.ARTIST ->
+            downloadedPodcastEpisodesByNameAsc().map { songs ->
+                val collator = Collator.getInstance(Locale.getDefault())
+                collator.strength = Collator.PRIMARY
+                songs.sortedWith(compareBy(collator) { song ->
+                    song.orderedArtists.joinToString("") { it.name }
+                })
+            }
+        SongSortType.PLAY_TIME -> downloadedPodcastEpisodesByPlayTimeAsc()
     }.map { it.reversed(descending) }
 
     @Transaction
@@ -1660,6 +1813,23 @@ interface DatabaseDao {
 
     @Query("SELECT * FROM podcast WHERE id = :id")
     fun podcast(id: String): Flow<PodcastEntity?>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM podcast WHERE channelId = :channelId AND bookmarkedAt IS NOT NULL)")
+    fun hasSubscribedPodcastByChannelId(channelId: String): Flow<Boolean>
+
+    @Transaction
+    @SuppressWarnings(RoomWarnings.QUERY_MISMATCH)
+    @Query("""
+        SELECT *, (SELECT COUNT(1) FROM song_artist_map JOIN song ON song_artist_map.songId = song.id WHERE artistId = artist.id AND song.inLibrary IS NOT NULL) AS songCount
+        FROM artist
+        WHERE artist.bookmarkedAt IS NOT NULL
+        AND artist.isPodcastChannel = 1
+        ORDER BY artist.name COLLATE NOCASE ASC
+    """)
+    fun bookmarkedPodcastChannels(): Flow<List<Artist>>
+
+    @Query("SELECT * FROM podcast WHERE channelId = :channelId")
+    fun podcastsByChannelId(channelId: String): Flow<List<PodcastEntity>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     fun insert(podcast: PodcastEntity): Long
