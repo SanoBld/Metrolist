@@ -21,6 +21,7 @@
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white&labelColor=0d1117)](https://dsc.gg/metrolist)
 [![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white&labelColor=0d1117)](https://t.me/metrolistapp)
 
+
 <br/>
 
 [**Download**](#download-now) · [**Features**](#features) · [**Translate**](#translations) · [**FAQ**](#faq) · [**Support**](#support-the-project)
@@ -314,6 +315,14 @@
 ---
 
 <div align="center">
+
+<div align="center">
+
+<h1>Star History</h1>
+
+[![GitHub Star History Chart](https://api.star-history.com/svg?repos=MetrolistGroup/Metrolist&type=Date)](https://star-history.com/#MetrolistGroup/Metrolist&Date)
+
+</div>
 
 <h1>Contributors</h1>
 
