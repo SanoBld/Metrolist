@@ -179,6 +179,7 @@ import com.metrolist.music.playback.queues.EmptyQueue
 import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.playback.queues.Queue
 import com.metrolist.music.playback.queues.YouTubeQueue
+import com.metrolist.music.playback.queues.YouTubePlaylistQueue
 import com.metrolist.music.playback.queues.filterExplicit
 import com.metrolist.music.playback.queues.filterVideoSongs
 import com.metrolist.music.constants.LoudnessLevel
@@ -194,6 +195,8 @@ import com.metrolist.music.utils.get
 import com.metrolist.music.utils.reportException
 import com.metrolist.music.widget.MetrolistWidgetManager
 import com.metrolist.music.widget.MusicWidgetReceiver
+import com.metrolist.music.widget.PlaylistWidgetReceiver
+import com.metrolist.music.ui.utils.resize
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CancellationException
 import kotlin.coroutines.coroutineContext
@@ -229,6 +232,7 @@ import java.io.ObjectOutputStream
 import java.time.LocalDateTime
 import javax.inject.Inject
 import kotlin.random.Random
+import java.util.Collections
 
 private const val INSTANT_SILENCE_SKIP_STEP_MS = 15_000L
 private const val INSTANT_SILENCE_SKIP_SETTLE_MS = 350L
@@ -415,8 +419,30 @@ class MusicService :
     private var retryCount = 0
     private var silenceSkipJob: Job? = null
 
+    // Cached preferences to avoid runBlocking DataStore reads in hot paths
+    @Volatile
+    private var cachedPersistentQueue = true
+    @Volatile
+    private var cachedAutoplay = true
+    @Volatile
+    private var cachedDisableLoadMoreWhenRepeatAll = false
+    @Volatile
+    private var cachedHideExplicit = false
+    @Volatile
+    private var cachedHideVideoSongs = false
+    @Volatile
+    private var cachedShufflePlaylistFirst = false
+    @Volatile
+    private var cachedAutoLoadMore = true
+
     // URL cache for stream URLs - class-level so it can be invalidated on errors
-    private val songUrlCache = HashMap<String, Pair<String, Long>>()
+    private val songUrlCache = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Pair<String, Long>>(0, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<String, Long>>): Boolean {
+                return size > 500
+            }
+        }
+    )
 
     // Flag to bypass cache when quality changes - forces fresh stream fetch
     private val bypassCacheForQualityChange = mutableSetOf<String>()
@@ -835,8 +861,10 @@ class MusicService :
                     discordRpc?.closeRPC()
                 }
                 discordRpc = null
+
                 if (key != null && enabled) {
-                    discordRpc = DiscordRPC(this, key)
+                    discordRpc = DiscordRPC(key)
+                    discordRpc?.start() // Connect immediately to avoid first-play delay
                     if (player.playbackState == Player.STATE_READY && player.playWhenReady) {
                         currentSong.value?.let {
                             updateDiscordRPC(it, true)
@@ -935,6 +963,29 @@ class MusicService :
                 crossfadeGapless = gapless
             }
 
+        // Observe and cache common preferences to avoid runBlocking reads in playback callbacks
+        scope.launch {
+            dataStore.data.map { it[PersistentQueueKey] ?: true }.distinctUntilChanged().collect { cachedPersistentQueue = it }
+        }
+        scope.launch {
+            dataStore.data.map { it[AutoplayKey] ?: true }.distinctUntilChanged().collect { cachedAutoplay = it }
+        }
+        scope.launch {
+            dataStore.data.map { it[DisableLoadMoreWhenRepeatAllKey] ?: false }.distinctUntilChanged().collect { cachedDisableLoadMoreWhenRepeatAll = it }
+        }
+        scope.launch {
+            dataStore.data.map { it[HideExplicitKey] ?: false }.distinctUntilChanged().collect { cachedHideExplicit = it }
+        }
+        scope.launch {
+            dataStore.data.map { it[HideVideoSongsKey] ?: false }.distinctUntilChanged().collect { cachedHideVideoSongs = it }
+        }
+        scope.launch {
+            dataStore.data.map { it[ShufflePlaylistFirstKey] ?: false }.distinctUntilChanged().collect { cachedShufflePlaylistFirst = it }
+        }
+        scope.launch {
+            dataStore.data.map { it[AutoLoadMoreKey] ?: true }.distinctUntilChanged().collect { cachedAutoLoadMore = it }
+        }
+
         if (dataStore.get(PersistentQueueKey, true)) {
             val queueFile = filesDir.resolve(PERSISTENT_QUEUE_FILE)
             if (queueFile.exists()) {
@@ -1023,7 +1074,7 @@ class MusicService :
         scope.launch {
             while (isActive) {
                 delay(15.seconds)
-                if (dataStore.get(PersistentQueueKey, true)) {
+                if (cachedPersistentQueue) {
                     saveQueueToDisk()
                 }
                 // Also save episode position periodically
@@ -1039,7 +1090,7 @@ class MusicService :
         scope.launch {
             while (isActive) {
                 delay(10.seconds)
-                if (dataStore.get(PersistentQueueKey, true) && player.isPlaying) {
+                if (cachedPersistentQueue && player.isPlaying) {
                     saveQueueToDisk()
                 }
             }
@@ -1550,8 +1601,8 @@ class MusicService :
                                 songs
                                     .filter { it.id != currentMediaId }
                                     .map { it.toMediaItem() }
-                                    .filterExplicit(dataStore.get(HideExplicitKey, false))
-                                    .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
+                                    .filterExplicit(cachedHideExplicit)
+                                    .filterVideoSongs(cachedHideVideoSongs)
 
                             if (radioItems.isNotEmpty()) {
                                 val itemCount = player.mediaItemCount
@@ -1560,11 +1611,10 @@ class MusicService :
                                 }
                                 player.addMediaItems(currentIndex + 1, radioItems)
                                 if (player.shuffleModeEnabled) {
-                                    val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
                                     applyShuffleOrder(
                                         player.currentMediaItemIndex,
                                         player.mediaItemCount,
-                                        shufflePlaylistFirst,
+                                        cachedShufflePlaylistFirst,
                                     )
                                 }
                             }
@@ -2220,8 +2270,7 @@ class MusicService :
 
         // Force Repeat One if the player ignored it and auto-advanced
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-            val repeatMode = runBlocking { dataStore.get(RepeatModeKey, REPEAT_MODE_OFF) }
-            if (repeatMode == REPEAT_MODE_ONE &&
+            if (player.repeatMode == REPEAT_MODE_ONE &&
                 previousMediaItemIndex != C.INDEX_UNSET &&
                 previousMediaItemIndex != player.currentMediaItemIndex
             ) {
@@ -2260,32 +2309,31 @@ class MusicService :
         }
 
         // Auto load more songs from queue
-        if (dataStore.get(AutoLoadMoreKey, true) &&
+        if (cachedAutoLoadMore &&
             reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
             player.mediaItemCount - player.currentMediaItemIndex <= 5 &&
             currentQueue.hasNextPage() &&
-            !(dataStore.get(DisableLoadMoreWhenRepeatAllKey, false) && player.repeatMode == REPEAT_MODE_ALL)
+            !(cachedDisableLoadMoreWhenRepeatAll && player.repeatMode == REPEAT_MODE_ALL)
         ) {
             scope.launch(SilentHandler) {
                 val mediaItems =
                     withContext(Dispatchers.IO) {
                         currentQueue
                             .nextPage()
-                            .filterExplicit(dataStore.get(HideExplicitKey, false))
-                            .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
+                            .filterExplicit(cachedHideExplicit)
+                            .filterVideoSongs(cachedHideVideoSongs)
                     }
                 if (player.playbackState != STATE_IDLE && mediaItems.isNotEmpty()) {
                     player.addMediaItems(mediaItems)
                     if (player.shuffleModeEnabled) {
-                        val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-                        applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
+                        applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, cachedShufflePlaylistFirst)
                     }
                 }
             }
         }
 
         // Save state when media item changes
-        if (dataStore.get(PersistentQueueKey, true)) {
+        if (cachedPersistentQueue) {
             saveQueueToDisk()
         }
     }
@@ -2300,7 +2348,7 @@ class MusicService :
                 return
             }
 
-            val repeatMode = runBlocking { dataStore.get(RepeatModeKey, REPEAT_MODE_OFF) }
+            val repeatMode = player.repeatMode
 
             // Handle Repeat All mode
             if (repeatMode == REPEAT_MODE_ALL && player.mediaItemCount > 0) {
@@ -2319,8 +2367,7 @@ class MusicService :
             }
 
             // Handle autoplay - check if there's a next item to play
-            val autoplay = runBlocking { dataStore.get(AutoplayKey, true) }
-            if (autoplay && player.hasNextMediaItem()) {
+            if (cachedAutoplay && player.hasNextMediaItem()) {
                 player.seekToNextMediaItem()
                 player.prepare()
                 if (castConnectionHandler?.isCasting?.value != true) {
@@ -2330,7 +2377,7 @@ class MusicService :
         }
 
         // Save state when playback state changes (but not during silence skipping)
-        if (dataStore.get(PersistentQueueKey, true) && !isSilenceSkipping) {
+        if (cachedPersistentQueue && !isSilenceSkipping) {
             saveQueueToDisk()
         }
 
@@ -2478,7 +2525,7 @@ class MusicService :
         }
 
         // Save state when shuffle mode changes
-        if (dataStore.get(PersistentQueueKey, true)) {
+        if (cachedPersistentQueue) {
             saveQueueToDisk()
         }
     }
@@ -2492,7 +2539,7 @@ class MusicService :
         }
 
         // Save state when repeat mode changes
-        if (dataStore.get(PersistentQueueKey, true)) {
+        if (cachedPersistentQueue) {
             saveQueueToDisk()
         }
     }
@@ -3166,9 +3213,14 @@ class MusicService :
         val activityType = if (advancedMode) dataStore.get(DiscordActivityTypeKey, "listening") else "listening"
         val activityName = if (advancedMode) dataStore.get(DiscordActivityNameKey, "") else ""
 
+        val artistThumbnail = song.artists.firstOrNull()?.thumbnailUrl
+        Timber.d("[DiscordRPC] updateDiscordRPC: song=${song.song.title}, artistThumbnail=${artistThumbnail != null}")
+
         discordUpdateJob?.cancel()
         discordUpdateJob =
             scope.launch {
+                Timber.d("[DiscordRPC] Starting RPC update...")
+                val startTime = System.currentTimeMillis()
                 discordRpc
                     ?.updateSong(
                         song,
@@ -3183,8 +3235,7 @@ class MusicService :
                         activityType,
                         activityName,
                     )?.onFailure {
-                        // Rate limited or error
-                        if (showFeedback) {
+                        if (showFeedback && it !is CancellationException) {
                             Handler(Looper.getMainLooper()).post {
                                 Toast
                                     .makeText(
@@ -3194,8 +3245,93 @@ class MusicService :
                                     ).show()
                             }
                         }
+                        Timber.e("[DiscordRPC] RPC update failed: ${it.message}")
+                    }?.onSuccess {
+                        Timber.d("[DiscordRPC] RPC update completed in ${System.currentTimeMillis() - startTime}ms")
                     }
             }
+        // Fetch missing artist thumbnail independently (not cancelled on song skip)
+        scope.launch {
+            Timber.d("[DiscordRPC] Starting artist thumbnail fetch for ${song.artists.firstOrNull()?.name}")
+            val fetched = fetchArtistThumbnail(song)
+            if (fetched != null) {
+                Timber.d("[DiscordRPC] Artist thumbnail fetched, updating RPC...")
+                discordRpc?.updateSong(
+                    fetched,
+                    player.currentPosition,
+                    player.playbackParameters.speed,
+                    useDetails,
+                    status,
+                    b1Text,
+                    b1Visible,
+                    b2Text,
+                    b2Visible,
+                    activityType,
+                    activityName,
+                )
+                Timber.d("[DiscordRPC] Artist thumbnail RPC update completed")
+            } else {
+                Timber.w("[DiscordRPC] Artist thumbnail fetch returned null")
+            }
+        }
+    }
+
+    private suspend fun fetchArtistThumbnail(song: Song): Song? {
+        val artist = song.artists.firstOrNull()
+        Timber.d("[ArtistFetch] fetchArtistThumbnail: artist=${artist?.name}, thumbnailUrl=${artist?.thumbnailUrl}")
+        
+        if (artist == null) {
+            Timber.w("[ArtistFetch] No artist found")
+            return null
+        }
+        
+        if (artist.thumbnailUrl != null) {
+            Timber.d("[ArtistFetch] Artist already has thumbnail, skipping")
+            return null
+        }
+
+        val browseId = when {
+            artist.channelId != null && !artist.channelId.startsWith("LA")
+                && !artist.channelId.startsWith("FEmusic_library_privately_owned") -> {
+                Timber.d("[ArtistFetch] Using channelId: ${artist.channelId}")
+                artist.channelId
+            }
+            !artist.id.startsWith("LA")
+                && !artist.id.startsWith("FEmusic_library_privately_owned") -> {
+                Timber.d("[ArtistFetch] Using id: ${artist.id}")
+                artist.id
+            }
+            else -> {
+                Timber.w("[ArtistFetch] No valid browseId (id=${artist.id}, channelId=${artist.channelId})")
+                return null
+            }
+        }
+
+        return try {
+            Timber.d("[ArtistFetch] Calling YouTube.artist($browseId)...")
+            val startTime = System.currentTimeMillis()
+            val artistPage = withContext(Dispatchers.IO) {
+                YouTube.artist(browseId).getOrNull()
+            }
+            Timber.d("[ArtistFetch] YouTube.artist completed in ${System.currentTimeMillis() - startTime}ms, result=${artistPage != null}")
+            
+            val thumbnail = artistPage?.artist?.thumbnail?.resize(1080, 1080)
+            Timber.d("[ArtistFetch] Thumbnail from API: ${thumbnail != null}")
+            
+            if (thumbnail != null) {
+                database.update(artist.copy(thumbnailUrl = thumbnail))
+                Timber.d("[ArtistFetch] Database updated with thumbnail")
+                val updatedSong = database.getSongById(song.song.id)
+                Timber.d("[ArtistFetch] Returning updated song")
+                updatedSong
+            } else {
+                Timber.w("[ArtistFetch] No thumbnail in artistPage")
+                null
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "[ArtistFetch] Exception during fetch")
+            null
+        }
     }
 
     private fun createDataSourceFactory(): DataSource.Factory {
@@ -3707,12 +3843,124 @@ class MusicService :
                 updateWidgetUI(player.isPlaying)
             }
 
-            MusicWidgetReceiver.ACTION_UPDATE_WIDGET -> {
+            MusicWidgetReceiver.ACTION_UPDATE_WIDGET,
+            PlaylistWidgetReceiver.ACTION_UPDATE_WIDGET -> {
                 updateWidgetUI(player.isPlaying)
+            }
+
+            PlaylistWidgetReceiver.ACTION_PLAY_TARGET -> {
+                handlePlaylistWidgetPlay(intent)
             }
         }
 
         return super.onStartCommand(intent, flags, startId)
+    }
+
+
+    private fun handlePlaylistWidgetPlay(intent: Intent) {
+        scope.launch {
+            try {
+                val queue = withContext(Dispatchers.IO) {
+                    buildPlaylistWidgetQueue(intent)
+                }
+                // Fall back to opening the target in app when it cannot be played directly
+                if (queue == null) {
+                    openPlaylistWidgetTarget(intent)
+                    return@launch
+                }
+                playQueue(queue, playWhenReady = true)
+                updateWidgetUI(true)
+            } catch (t: Throwable) {
+                Timber.tag(TAG).e(t, "Failed to start playlist widget target")
+                openPlaylistWidgetTarget(intent)
+            }
+        }
+    }
+
+    private fun openPlaylistWidgetTarget(source: Intent) {
+        val activityIntent = Intent(this, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_OPEN_WIDGET_TARGET
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(
+                MainActivity.EXTRA_WIDGET_TARGET_TYPE,
+                source.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_TYPE),
+            )
+            putExtra(
+                MainActivity.EXTRA_WIDGET_TARGET_ID,
+                source.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_ID),
+            )
+        }
+        try {
+            startActivity(activityIntent)
+        } catch (t: Throwable) {
+            Timber.tag(TAG).e(t, "Failed to open playlist widget target")
+        }
+    }
+
+    private suspend fun buildPlaylistWidgetQueue(intent: Intent): Queue? {
+        val targetType = intent.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_TYPE) ?: return null
+        val targetId = intent.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_ID).orEmpty()
+        val targetTitle = intent.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_TITLE)
+
+        return when (targetType) {
+            PlaylistWidgetReceiver.TARGET_TYPE_LOCAL -> {
+                if (targetId.isBlank()) return null
+                val songs = database.playlistSongs(targetId).first()
+                if (songs.isEmpty()) return null
+                val playlistName = database.playlist(targetId).first()?.playlist?.name ?: targetTitle
+                ListQueue(
+                    title = playlistName,
+                    items = songs.map { it.song.toMediaItem() },
+                )
+            }
+
+            PlaylistWidgetReceiver.TARGET_TYPE_ONLINE -> {
+                if (targetId.isBlank()) return null
+                val cachedPlaylist = database.playlistByBrowseId(targetId).first()
+                val cachedSongs = cachedPlaylist?.let { database.playlistSongs(it.playlist.id).first() }.orEmpty()
+                if (cachedSongs.isNotEmpty()) {
+                    ListQueue(
+                        title = cachedPlaylist?.playlist?.name ?: targetTitle,
+                        items = cachedSongs.map { it.song.toMediaItem() },
+                    )
+                } else {
+                    YouTubePlaylistQueue(
+                        playlistId = targetId,
+                        playlistTitle = targetTitle,
+                    )
+                }
+            }
+
+            PlaylistWidgetReceiver.TARGET_TYPE_LIKED -> {
+                val songs = database.likedSongsByCreateDateAsc().first()
+                if (songs.isEmpty()) return null
+                ListQueue(
+                    title = getString(R.string.liked_songs),
+                    items = songs.map { it.toMediaItem() },
+                )
+            }
+
+            PlaylistWidgetReceiver.TARGET_TYPE_DOWNLOADED -> {
+                val songs = database.downloadedSongsByCreateDateAsc().first()
+                if (songs.isEmpty()) return null
+                ListQueue(
+                    title = getString(R.string.downloaded_songs),
+                    items = songs.map { it.toMediaItem() },
+                )
+            }
+
+            PlaylistWidgetReceiver.TARGET_TYPE_TOP -> {
+                val limit = targetId.toIntOrNull() ?: 50
+                val songs = database.mostPlayedSongs(0L, limit = limit).first()
+                if (songs.isEmpty()) return null
+                ListQueue(
+                    title = getString(R.string.my_top),
+                    items = songs.map { it.toMediaItem() },
+                )
+            }
+
+            else -> null
+        }
     }
 
     private fun handleAlarmTrigger(intent: Intent) {
