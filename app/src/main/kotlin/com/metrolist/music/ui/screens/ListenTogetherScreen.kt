@@ -289,7 +289,7 @@ fun ListenTogetherScreen(
                 }
 
                 // Connected users
-                val connectedUsers = room.users.filter { it.isConnected }
+                val connectedUsers = room.usersList.filter { it.isConnected }
                 val currentUserIdValue = userId ?: ""
                 item {
                     ConnectedUsersSection(
@@ -697,7 +697,7 @@ private fun RoomStatusCard(
                 Spacer(modifier = Modifier.height(16.dp))
                 val inviteLink =
                     remember(roomCode) {
-                        "https://metrolist.meowery.eu/listen?code=$roomCode"
+                        "https://metrolist.cc/listen?code=$roomCode"
                     }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

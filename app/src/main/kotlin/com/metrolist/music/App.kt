@@ -5,13 +5,14 @@
 
 package com.metrolist.music
 
+import android.app.ActivityManager
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import android.os.Process
 import android.widget.Toast
-import androidx.datastore.preferences.core.edit
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -22,6 +23,7 @@ import coil3.request.CachePolicy
 import coil3.request.allowHardware
 import coil3.request.crossfade
 import com.metrolist.innertube.YouTube
+import com.metrolist.innertube.models.ArtistConjunctions
 import com.metrolist.innertube.models.YouTubeLocale
 import com.metrolist.kugou.KuGou
 import com.metrolist.lastfm.LastFM
@@ -31,12 +33,15 @@ import com.metrolist.music.di.ApplicationScope
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.extensions.toInetSocketAddress
 import com.metrolist.music.utils.CrashHandler
-import com.metrolist.music.utils.cipher.CipherDeobfuscator
+import com.metrolist.music.utils.ArtistNameAliases
+import com.metrolist.music.utils.InnerTubeXPlayer
 import com.metrolist.music.utils.dataStore
+import com.metrolist.music.utils.safeDataStoreEdit
 import com.metrolist.music.utils.reportException
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -64,8 +69,13 @@ class App :
     override fun onCreate() {
         super.onCreate()
 
+        // CrashActivity runs in a separate process. Starting the full app there can make that
+        // process claim WebView's data directory and crash the next main-process WebView.
+        if (!isMainProcess()) return
+
         // Install crash handler first
         CrashHandler.install(this)
+        ArtistNameAliases.initialize(this)
 
         // preferencesDataStore uses filesDir/datastore; proactive mkdir reduces failures on odd ROM states
         try {
@@ -77,10 +87,9 @@ class App :
             Timber.e(e, "Failed to ensure DataStore directory")
         }
 
-        // Initialize cipher deobfuscator for WEB_REMIX streaming
-        CipherDeobfuscator.initialize(this)
-
+        // Plant logging before extraction services initialize.
         Timber.plant(Timber.DebugTree())
+        InnerTubeXPlayer.initialize(this)
 
         // Pre-read Coil cache size on background to avoid runBlocking in newImageLoader
         applicationScope.launch(Dispatchers.IO) {
@@ -89,7 +98,20 @@ class App :
 
         // تهيئة إعدادات التطبيق عند الإقلاع
         applicationScope.launch {
+            // Apply settings, including proxy configuration, before building extraction transport.
             initializeSettings()
+
+            // Warm player config, cipher, and optional PO-token state off the first-play path.
+            launch(Dispatchers.IO) {
+                delay(2500)
+                var waitedMs = 0
+                while (YouTube.visitorData == null && waitedMs < 12_000) {
+                    delay(500)
+                    waitedMs += 500
+                }
+                runCatching { InnerTubeXPlayer.prewarm() }
+            }
+
             observeSettingsChanges()
         }
     }
@@ -98,6 +120,12 @@ class App :
         val settings = dataStore.data.first()
         val locale = Locale.getDefault()
         val languageTag = locale.language
+
+        ArtistConjunctions.conjunctions = listOf(
+            R.string.and,
+        ).mapNotNull { id ->
+            runCatching { getString(id) }.getOrNull()
+        }
 
         YouTube.locale =
             YouTubeLocale(
@@ -174,7 +202,7 @@ class App :
                     YouTube.visitorData = visitorData?.takeIf { it != "null" }
                         ?: YouTube.visitorData().getOrNull()?.also { newVisitorData ->
                             try {
-                                dataStore.edit { settings ->
+                                safeDataStoreEdit { settings ->
                                     settings[VisitorDataKey] = newVisitorData
                                 }
                             } catch (e: IOException) {
@@ -196,6 +224,15 @@ class App :
                                 ?: it.takeIf { it.endsWith("||") }?.substringBefore("||")
                                 ?: it.substringAfter("||")
                         }
+                }
+        }
+
+        applicationScope.launch(Dispatchers.IO) {
+            dataStore.data
+                .map { it[InnerTubeAuthUserKey] ?: "0" }
+                .distinctUntilChanged()
+                .collect { authUser ->
+                    YouTube.authUser = authUser
                 }
         }
 
@@ -296,29 +333,28 @@ class App :
 
             // Clear DataStore preferences
             Timber.d("forgetAccount: Clearing DataStore preferences")
-            context.dataStore.edit { settings ->
+            val cleared = context.safeDataStoreEdit { settings ->
                 settings.remove(InnerTubeCookieKey)
                 settings.remove(VisitorDataKey)
                 settings.remove(DataSyncIdKey)
+                settings.remove(InnerTubeAuthUserKey)
                 settings.remove(AccountNameKey)
                 settings.remove(AccountEmailKey)
                 settings.remove(AccountChannelHandleKey)
             }
-            Timber.d("forgetAccount: DataStore preferences cleared")
+            if (!cleared) {
+                Timber.e("forgetAccount: Failed to clear DataStore preferences — proceeding with in-memory cleanup only")
+            } else {
+                Timber.d("forgetAccount: DataStore preferences cleared")
+            }
 
             // Immediately clear YouTube object's auth state
             Timber.d("forgetAccount: Clearing YouTube object auth state")
-            Timber.d(
-                "forgetAccount: Before - cookie=${YouTube.cookie?.take(
-                    50,
-                )}, visitorData=${YouTube.visitorData?.take(20)}, dataSyncId=${YouTube.dataSyncId?.take(20)}",
-            )
             YouTube.cookie = null
             YouTube.visitorData = null
             YouTube.dataSyncId = null
-            Timber.d(
-                "forgetAccount: After - cookie=${YouTube.cookie}, visitorData=${YouTube.visitorData}, dataSyncId=${YouTube.dataSyncId}",
-            )
+            YouTube.authUser = "0"
+            Timber.d("forgetAccount: YouTube object auth state cleared")
 
             // Clear WebView cookies to prevent auto-relogin
             Timber.d("forgetAccount: Clearing WebView CookieManager")
@@ -332,5 +368,23 @@ class App :
             }
             Timber.d("forgetAccount: Logout process complete")
         }
+    }
+
+    private fun isMainProcess(): Boolean {
+        val processName =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                Application.getProcessName()
+            } else {
+                runCatching {
+                    File("/proc/self/cmdline").readText().substringBefore('\u0000')
+                }.getOrNull()?.takeIf(String::isNotBlank)
+                    ?: run {
+                        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                        activityManager.runningAppProcesses
+                            ?.firstOrNull { it.pid == Process.myPid() }
+                            ?.processName
+                    }
+            }
+        return processName == packageName
     }
 }

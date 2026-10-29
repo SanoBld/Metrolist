@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
+import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -173,6 +174,26 @@ class PlaylistWidgetManager @Inject constructor(
         }
     }
 
+    fun updateProgress(
+        duration: Long,
+        currentPosition: Long,
+    ) {
+        val appWidgetManager = AppWidgetManager.getInstance(context)
+        val widgetIds = appWidgetManager.getAppWidgetIds(
+            ComponentName(context, PlaylistWidgetReceiver::class.java),
+        )
+        if (widgetIds.isEmpty()) return
+
+        val level = if (duration > 0) {
+            ((currentPosition.toDouble() / duration) * 10000).toInt().coerceIn(0, 10000)
+        } else {
+            0
+        }
+        val views = RemoteViews(context.packageName, R.layout.widget_playlist)
+        views.setInt(R.id.widget_playlist_progress_fill, "setImageLevel", level)
+        appWidgetManager.partiallyUpdateAppWidget(widgetIds, views)
+    }
+
     @OptIn(FlowPreview::class)
     private fun observeQuickPickChanges() {
         combine(
@@ -213,7 +234,7 @@ class PlaylistWidgetManager @Inject constructor(
                     )
                 }
             },
-            database.mostPlayedSongs(0L, limit = 50).map { songs ->
+            database.mostPlayedSongs(fromTimeStamp = LocalDateTime.of(1970, 1, 1, 0, 0), limit = 50, offset = 0, toTimeStamp = LocalDateTime.now()).map { songs ->
                 songs.map { song ->
                     SongSnapshot(
                         id = song.id,
@@ -374,7 +395,7 @@ class PlaylistWidgetManager @Inject constructor(
         val savedPlaylistsDeferred = async { database.playlistsByCreateDateAsc().first() }
         val likedSongsDeferred = async { database.likedSongsByCreateDateAsc().first() }
         val downloadedSongsDeferred = async { database.downloadedSongsByCreateDateAsc().first() }
-        val topSongsDeferred = async { database.mostPlayedSongs(0L, limit = 50).first() }
+        val topSongsDeferred = async { database.mostPlayedSongs(fromTimeStamp = LocalDateTime.of(1970, 1, 1, 0, 0), limit = 50, offset = 0, toTimeStamp = LocalDateTime.now()).first() }
 
         val result = mutableListOf<QuickPick>()
         val seen = mutableSetOf<String>()

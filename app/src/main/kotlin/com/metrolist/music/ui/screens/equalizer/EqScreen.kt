@@ -45,7 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavController
+import com.metrolist.music.LocalNavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
 import com.metrolist.music.eq.data.SavedEQProfile
@@ -57,9 +57,9 @@ import timber.log.Timber
 @SuppressLint("LocalContextGetResourceValueCall")
 @Composable
 fun EqScreen(
-    navController: NavController,
     viewModel: EQViewModel = hiltViewModel(),
 ) {
+    val navController = LocalNavController.current
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -316,7 +316,7 @@ private fun NoEqualizationItem(
     onSelected: () -> Unit
 ) {
     ListItem(
-        headlineContent = {
+        content = {
             Text(
                 stringResource(R.string.eq_disabled),
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
@@ -344,7 +344,7 @@ private fun EQProfileItem(
     var showDeleteDialog by remember { mutableStateOf(false) }
 
     ListItem(
-        headlineContent = {
+        content = {
             Text(
                 text = profile.deviceModel,
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
